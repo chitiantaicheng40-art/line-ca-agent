@@ -74,8 +74,25 @@ async function pushMessage(userId, text) {
   );
 }
 
-async function sendThinking(replyToken) {
-  await replyMessage(replyToken, "ありがとう、少しだけ整理しますね。");
+// ===== LINEローディング表示 =====
+async function showLoadingAnimation(chatId, seconds = 20) {
+  try {
+    await axios.post(
+      "https://api.line.me/v2/bot/chat/loading/start",
+      {
+        chatId,
+        loadingSeconds: Math.max(5, Math.min(seconds, 60)),
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.LINE_CHANNEL_ACCESS_TOKEN}`,
+          "Content-Type": "application/json",
+        },
+      }
+    );
+  } catch (e) {
+    console.error("Loading animation error:", e?.response?.data || e.message || e);
+  }
 }
 
 // ===== 初期値 =====
@@ -363,12 +380,12 @@ ${historyText || "なし"}
   return (response.output_text || "").trim();
 }
 
-// ===== 履歴圧縮 =====
+// ===== 履歴圧縮（頻度少し抑える） =====
 async function compactSessionIfNeeded(session) {
-  if (session.history.length < 14) return session;
+  if (session.history.length < 20) return session;
 
-  const oldPart = session.history.slice(0, -8);
-  const keepPart = session.history.slice(-8);
+  const oldPart = session.history.slice(0, -10);
+  const keepPart = session.history.slice(-10);
 
   session.summary = await summarizeHistory(session.summary, oldPart);
   session.history = keepPart;
@@ -541,13 +558,9 @@ ${userAnswer}
     input: prompt,
   });
 
-  const output = response.output_text || "全体の方向性は悪くないですが、具体性をもう一段上げたいです。次の質問に進みます。";
-
-  // 次の質問抽出はざっくり最後の文を使う
-  const lines = output
-    .split("\n")
-    .map((s) => s.trim())
-    .filter(Boolean);
+  const output =
+    response.output_text ||
+    "全体の方向性は悪くないですが、具体性をもう一段上げたいです。次の質問に進みます。";
 
   const sentences = output
     .replace(/\n/g, " ")
@@ -555,7 +568,8 @@ ${userAnswer}
     .map((s) => s.trim())
     .filter(Boolean);
 
-  const nextQuestion = sentences[sentences.length - 1] || "次に、転職理由を教えてください。";
+  const nextQuestion =
+    sentences[sentences.length - 1] || "次に、転職理由を教えてください。";
 
   return {
     reply: output.trim(),
@@ -581,28 +595,33 @@ app.post("/webhook", async (req, res) => {
 
       const userId = event.source?.userId;
       const userText = event.message.text;
+      const replyToken = event.replyToken;
 
-      if (!userId) continue;
+      if (!userId || !replyToken) continue;
 
-      await sendThinking(event.replyToken);
+      // UX改善：文字の中間メッセージは出さず、LINEのローディングだけ出す
+      await showLoadingAnimation(userId, 20);
 
       const session = await getSession(userId);
 
-      // 面接モード終了
+      // ===== 面接モード終了 =====
       if (isInterviewEndMessage(userText)) {
         session.interview_state = defaultInterviewState();
         session.history.push({ role: "user", content: userText });
 
-        const endReply = "了解です。面接モードを終了して、通常のキャリア相談モードに戻します。気になる求人やキャリアの方向性があれば、そのまま続けて相談してください。";
+        const endReply =
+          "了解です。面接モードを終了して、通常のキャリア相談モードに戻します。気になる求人やキャリアの方向性があれば、そのまま続けて相談してください。";
 
         session.history.push({ role: "assistant", content: endReply });
         await compactSessionIfNeeded(session);
         await saveSession(session);
+
+        await replyMessage(replyToken, " ");
         await pushMessage(userId, endReply);
         continue;
       }
 
-      // 面接モード開始
+      // ===== 面接モード開始 =====
       if (isInterviewStartMessage(userText)) {
         const targetRole = detectTargetRole(userText);
 
@@ -624,14 +643,16 @@ app.post("/webhook", async (req, res) => {
         session.history.push({ role: "assistant", content: startReply });
         await compactSessionIfNeeded(session);
         await saveSession(session);
+
+        await replyMessage(replyToken, " ");
         await pushMessage(userId, startReply);
         continue;
       }
 
-      // 面接モード中
+      // ===== 面接モード中 =====
       if (session.interview_state?.active) {
+        // 面接モード中は品質を大きく落とさず、毎回のAIプロフィール抽出は省いて軽量化
         session.profile = updateProfileFromUserMessage(session.profile, userText);
-        session.profile = await extractProfileWithAI(session.profile, userText);
 
         session.history.push({ role: "user", content: userText });
 
@@ -639,17 +660,20 @@ app.post("/webhook", async (req, res) => {
 
         session.interview_state.last_feedback = result.reply;
         session.interview_state.last_question = result.nextQuestion;
-        session.interview_state.question_count = (session.interview_state.question_count || 1) + 1;
+        session.interview_state.question_count =
+          (session.interview_state.question_count || 1) + 1;
 
         session.history.push({ role: "assistant", content: result.reply });
 
         await compactSessionIfNeeded(session);
         await saveSession(session);
+
+        await replyMessage(replyToken, " ");
         await pushMessage(userId, result.reply);
         continue;
       }
 
-      // 通常相談モード
+      // ===== 通常相談モード =====
       session.profile = updateProfileFromUserMessage(session.profile, userText);
       session.profile = await extractProfileWithAI(session.profile, userText);
 
@@ -662,12 +686,19 @@ app.post("/webhook", async (req, res) => {
       await compactSessionIfNeeded(session);
       await saveSession(session);
 
+      await replyMessage(replyToken, " ");
       await pushMessage(userId, aiReply);
     } catch (e) {
       console.error("Webhook error:", e?.response?.data || e.message || e);
 
       try {
         const userId = event.source?.userId;
+        const replyToken = event.replyToken;
+
+        if (replyToken) {
+          await replyMessage(replyToken, " ");
+        }
+
         if (userId) {
           await pushMessage(
             userId,
