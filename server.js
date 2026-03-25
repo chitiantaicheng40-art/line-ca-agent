@@ -78,7 +78,7 @@ async function sendThinking(replyToken) {
   await replyMessage(replyToken, "ありがとう、少しだけ整理しますね。");
 }
 
-// ===== プロフィール初期値 =====
+// ===== 初期値 =====
 function defaultProfile() {
   return {
     current_job: null,
@@ -92,6 +92,16 @@ function defaultProfile() {
     desired_salary: null,
     work_style: null,
     concerns: null,
+  };
+}
+
+function defaultInterviewState() {
+  return {
+    active: false,
+    target_role: null,
+    question_count: 0,
+    last_question: null,
+    last_feedback: null,
   };
 }
 
@@ -112,14 +122,12 @@ function safeJsonParse(text, fallback = {}) {
 
 function mergeProfile(base, patch) {
   const next = { ...base };
-
   for (const key of Object.keys(next)) {
     const value = patch?.[key];
     if (value === undefined || value === null) continue;
     if (typeof value === "string" && value.trim() === "") continue;
     next[key] = value;
   }
-
   return next;
 }
 
@@ -134,7 +142,7 @@ function recentHistoryText(history, maxItems = 8) {
 async function getSession(userId) {
   const { data, error } = await supabase
     .from("line_ca_sessions")
-    .select("user_id, history, profile, summary, updated_at")
+    .select("user_id, history, profile, summary, updated_at, interview_state")
     .eq("user_id", userId)
     .maybeSingle();
 
@@ -146,6 +154,7 @@ async function getSession(userId) {
       history: [],
       profile: defaultProfile(),
       summary: "",
+      interview_state: defaultInterviewState(),
       updated_at: new Date().toISOString(),
     };
 
@@ -163,6 +172,7 @@ async function getSession(userId) {
     history: Array.isArray(data.history) ? data.history : [],
     profile: data.profile || defaultProfile(),
     summary: data.summary || "",
+    interview_state: data.interview_state || defaultInterviewState(),
     updated_at: data.updated_at,
   };
 }
@@ -174,18 +184,19 @@ async function saveSession(session) {
     history: session.history,
     profile: session.profile,
     summary: session.summary || "",
+    interview_state: session.interview_state || defaultInterviewState(),
     updated_at: new Date().toISOString(),
   });
 
   if (error) throw error;
 }
 
-// ===== 軽いプロフィール抽出（ルールベース） =====
+// ===== ルールベースプロフィール抽出 =====
 function updateProfileFromUserMessage(profile, text) {
   const msg = (text || "").trim();
 
   if (!profile.current_job) {
-    if (/法人営業|個人営業|営業|販売|接客|RA|CA|人事|マーケ|CS|エンジニア|事務/.test(msg)) {
+    if (/法人営業|個人営業|営業|販売|接客|RA|CA|人事|マーケ|CS|カスタマーサクセス|エンジニア|事務/.test(msg)) {
       profile.current_job = msg;
     }
   }
@@ -221,7 +232,7 @@ function updateProfileFromUserMessage(profile, text) {
   }
 
   if (!profile.desired_role) {
-    if (/RA|CA|両面|人材営業|求人広告|HR SaaS|エンタープライズ営業|コンサル/.test(msg)) {
+    if (/RA|CA|両面|人材営業|求人広告|HR SaaS|エンタープライズ営業|コンサル|カスタマーサクセス|CS/.test(msg)) {
       profile.desired_role = msg;
     }
   }
@@ -365,7 +376,29 @@ async function compactSessionIfNeeded(session) {
   return session;
 }
 
-// ===== AI応答 =====
+// ===== 面接モード判定 =====
+function isInterviewStartMessage(text) {
+  return /面接対策|模擬面接|面接練習|面接を練習|面接したい/.test(text || "");
+}
+
+function isInterviewEndMessage(text) {
+  return /面接対策終了|模擬面接終了|面接終了|通常モード|通常相談に戻る|終了/.test(text || "");
+}
+
+function detectTargetRole(text) {
+  if (!text) return null;
+
+  if (/RA|リクルーティングアドバイザー/.test(text)) return "RA";
+  if (/CA|キャリアアドバイザー/.test(text)) return "CA";
+  if (/両面/.test(text)) return "両面型人材紹介";
+  if (/SaaS営業|IT営業|法人営業/.test(text)) return "法人営業";
+  if (/カスタマーサクセス|CS/.test(text)) return "カスタマーサクセス";
+  if (/経営企画/.test(text)) return "経営企画";
+
+  return null;
+}
+
+// ===== 通常相談モード応答 =====
 async function getCareerAdvice(session, userMessage) {
   const historyText = recentHistoryText(session.history, 8);
 
@@ -438,6 +471,98 @@ ${nextQuestion || "必要なら自然に深掘りしてください"}
   return response.output_text || "ありがとう。もう少しだけ詳しく教えてもらえますか？";
 }
 
+// ===== 面接開始メッセージ =====
+function buildInterviewStartMessage(targetRole) {
+  const roleText = targetRole ? `${targetRole}向けの` : "";
+  return `${roleText}面接モードに入ります。これからは1問ずつ質問して、あなたの回答を厳しめに添削します。まずは「自己紹介を1分でお願いします」と言われた想定で答えてみてください。`;
+}
+
+// ===== 面接フィードバック =====
+async function evaluateInterviewAnswer(session, userAnswer) {
+  const profile = session.profile || defaultProfile();
+  const state = session.interview_state || defaultInterviewState();
+
+  const profileText = `
+現職: ${profile.current_job || "未取得"}
+業界: ${profile.industry || "未取得"}
+商材: ${profile.product || "未取得"}
+実績: ${profile.achievements || "未取得"}
+KPI: ${profile.kpi || "未取得"}
+転職理由: ${profile.reason_for_change || "未取得"}
+希望職種: ${profile.desired_role || "未取得"}
+希望業界: ${profile.desired_industry || "未取得"}
+希望年収: ${profile.desired_salary || "未取得"}
+働き方条件: ${profile.work_style || "未取得"}
+不安点: ${profile.concerns || "未取得"}
+  `.trim();
+
+  const prompt = `
+あなたは優秀で厳しめの面接官兼面接コーチです。
+候補者の回答を評価し、次の質問まで進めてください。
+
+【対象職種】
+${state.target_role || "未指定"}
+
+【候補者プロフィール】
+${profileText}
+
+【会話要約】
+${session.summary || "なし"}
+
+【直近の質問】
+${state.last_question || "自己紹介を1分でお願いします"}
+
+【候補者の回答】
+${userAnswer}
+
+【やってほしいこと】
+- 回答を実務目線で厳しめに評価
+- 良い点を1つ
+- 改善点を2つ
+- 改善後の回答例を2〜4文で出す
+- 最後に次の面接質問を1つだけ出す
+- そのままLINEに送れる自然な日本語にする
+- 箇条書きは使わない
+- 全体で4〜6文程度にする
+- 甘すぎる評価は禁止
+- 不明点は不明と扱う
+- 推測で褒めすぎない
+
+【出力ルール】
+1文目: 総評
+2文目: 良い点
+3〜4文目: 改善点
+5文目: 改善後の回答例
+6文目: 次の質問
+  `.trim();
+
+  const response = await openai.responses.create({
+    model: process.env.OPENAI_MODEL || "gpt-5",
+    input: prompt,
+  });
+
+  const output = response.output_text || "全体の方向性は悪くないですが、具体性をもう一段上げたいです。次の質問に進みます。";
+
+  // 次の質問抽出はざっくり最後の文を使う
+  const lines = output
+    .split("\n")
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  const sentences = output
+    .replace(/\n/g, " ")
+    .split(/(?<=[。！？])/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  const nextQuestion = sentences[sentences.length - 1] || "次に、転職理由を教えてください。";
+
+  return {
+    reply: output.trim(),
+    nextQuestion,
+  };
+}
+
 // ===== Webhook =====
 app.post("/webhook", async (req, res) => {
   const signature = req.headers["x-line-signature"];
@@ -463,6 +588,68 @@ app.post("/webhook", async (req, res) => {
 
       const session = await getSession(userId);
 
+      // 面接モード終了
+      if (isInterviewEndMessage(userText)) {
+        session.interview_state = defaultInterviewState();
+        session.history.push({ role: "user", content: userText });
+
+        const endReply = "了解です。面接モードを終了して、通常のキャリア相談モードに戻します。気になる求人やキャリアの方向性があれば、そのまま続けて相談してください。";
+
+        session.history.push({ role: "assistant", content: endReply });
+        await compactSessionIfNeeded(session);
+        await saveSession(session);
+        await pushMessage(userId, endReply);
+        continue;
+      }
+
+      // 面接モード開始
+      if (isInterviewStartMessage(userText)) {
+        const targetRole = detectTargetRole(userText);
+
+        session.interview_state = {
+          active: true,
+          target_role: targetRole,
+          question_count: 1,
+          last_question: "自己紹介を1分でお願いします。",
+          last_feedback: null,
+        };
+
+        session.profile = updateProfileFromUserMessage(session.profile, userText);
+        session.profile = await extractProfileWithAI(session.profile, userText);
+
+        session.history.push({ role: "user", content: userText });
+
+        const startReply = buildInterviewStartMessage(targetRole);
+
+        session.history.push({ role: "assistant", content: startReply });
+        await compactSessionIfNeeded(session);
+        await saveSession(session);
+        await pushMessage(userId, startReply);
+        continue;
+      }
+
+      // 面接モード中
+      if (session.interview_state?.active) {
+        session.profile = updateProfileFromUserMessage(session.profile, userText);
+        session.profile = await extractProfileWithAI(session.profile, userText);
+
+        session.history.push({ role: "user", content: userText });
+
+        const result = await evaluateInterviewAnswer(session, userText);
+
+        session.interview_state.last_feedback = result.reply;
+        session.interview_state.last_question = result.nextQuestion;
+        session.interview_state.question_count = (session.interview_state.question_count || 1) + 1;
+
+        session.history.push({ role: "assistant", content: result.reply });
+
+        await compactSessionIfNeeded(session);
+        await saveSession(session);
+        await pushMessage(userId, result.reply);
+        continue;
+      }
+
+      // 通常相談モード
       session.profile = updateProfileFromUserMessage(session.profile, userText);
       session.profile = await extractProfileWithAI(session.profile, userText);
 
