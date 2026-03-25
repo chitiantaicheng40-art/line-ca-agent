@@ -380,7 +380,7 @@ ${historyText || "なし"}
   return (response.output_text || "").trim();
 }
 
-// ===== 履歴圧縮（頻度少し抑える） =====
+// ===== 履歴圧縮 =====
 async function compactSessionIfNeeded(session) {
   if (session.history.length < 20) return session;
 
@@ -599,7 +599,6 @@ app.post("/webhook", async (req, res) => {
 
       if (!userId || !replyToken) continue;
 
-      // UX改善：文字の中間メッセージは出さず、LINEのローディングだけ出す
       await showLoadingAnimation(userId, 20);
 
       const session = await getSession(userId);
@@ -616,7 +615,7 @@ app.post("/webhook", async (req, res) => {
         await compactSessionIfNeeded(session);
         await saveSession(session);
 
-        await replyMessage(replyToken, " ");
+        await replyMessage(replyToken, "確認中です");
         await pushMessage(userId, endReply);
         continue;
       }
@@ -644,14 +643,13 @@ app.post("/webhook", async (req, res) => {
         await compactSessionIfNeeded(session);
         await saveSession(session);
 
-        await replyMessage(replyToken, " ");
+        await replyMessage(replyToken, "確認中です");
         await pushMessage(userId, startReply);
         continue;
       }
 
       // ===== 面接モード中 =====
       if (session.interview_state?.active) {
-        // 面接モード中は品質を大きく落とさず、毎回のAIプロフィール抽出は省いて軽量化
         session.profile = updateProfileFromUserMessage(session.profile, userText);
 
         session.history.push({ role: "user", content: userText });
@@ -668,7 +666,7 @@ app.post("/webhook", async (req, res) => {
         await compactSessionIfNeeded(session);
         await saveSession(session);
 
-        await replyMessage(replyToken, " ");
+        await replyMessage(replyToken, "確認中です");
         await pushMessage(userId, result.reply);
         continue;
       }
@@ -686,7 +684,7 @@ app.post("/webhook", async (req, res) => {
       await compactSessionIfNeeded(session);
       await saveSession(session);
 
-      await replyMessage(replyToken, " ");
+      await replyMessage(replyToken, "確認中です");
       await pushMessage(userId, aiReply);
     } catch (e) {
       console.error("Webhook error:", e?.response?.data || e.message || e);
@@ -696,7 +694,7 @@ app.post("/webhook", async (req, res) => {
         const replyToken = event.replyToken;
 
         if (replyToken) {
-          await replyMessage(replyToken, " ");
+          await replyMessage(replyToken, "確認中です");
         }
 
         if (userId) {
