@@ -1,0 +1,15 @@
+{
+  "name": "line-ca-agent",
+  "version": "1.0.0",
+  "description": "LINE Career Advisor Bot",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "dotenv": "^17.3.1",
+    "express": "^4.21.2",
+    "axios": "^1.8.4",
+    "openai": "^6.32.0"
+  }
+}
