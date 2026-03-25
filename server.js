@@ -6,7 +6,7 @@ const OpenAI = require("openai");
 const { createClient } = require("@supabase/supabase-js");
 
 const app = express();
-const PORT = process.env.PORT || 10000;
+const PORT = process.env.PORT;
 
 // ===== OpenAI =====
 const openai = new OpenAI({
@@ -41,52 +41,29 @@ function validateLineSignature(rawBody, signature) {
   return hash === signature;
 }
 
-// ===== 既読（Push APIを利用）=====
-async function sendSeen(userId) {
-  try {
-    await axios.post(
-      "https://api.line.me/v2/bot/message/push",
-      {
-        to: userId,
-        messages: [{ type: "text", text: "👀" }],
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${process.env.LINE_CHANNEL_ACCESS_TOKEN}`,
-          "Content-Type": "application/json",
-        },
-      }
-    );
-  } catch (e) {
-    console.log("seen error:", e?.response?.data || e.message);
-  }
-}
-
 // ===== thinking表示 =====
 async function sendThinking(replyToken) {
-  try {
-    await axios.post(
-      "https://api.line.me/v2/bot/message/reply",
-      {
-        replyToken,
-        messages: [{ type: "text", text: "💭 考え中..." }],
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${process.env.LINE_CHANNEL_ACCESS_TOKEN}`,
-          "Content-Type": "application/json",
-        },
-      }
-    );
-  } catch (e) {}
-}
-
-// ===== 通常返信 =====
-async function replyMessage(replyToken, text) {
   await axios.post(
     "https://api.line.me/v2/bot/message/reply",
     {
       replyToken,
+      messages: [{ type: "text", text: "ありがとう、少しだけ整理しますね。" }],
+    },
+    {
+      headers: {
+        Authorization: `Bearer ${process.env.LINE_CHANNEL_ACCESS_TOKEN}`,
+        "Content-Type": "application/json",
+      },
+    }
+  );
+}
+
+// ===== push送信 =====
+async function pushMessage(userId, text) {
+  await axios.post(
+    "https://api.line.me/v2/bot/message/push",
+    {
+      to: userId,
       messages: [{ type: "text", text }],
     },
     {
@@ -100,65 +77,67 @@ async function replyMessage(replyToken, text) {
 
 // ===== 履歴取得 =====
 async function getHistory(userId) {
-  const { data } = await supabase
-    .from("messages")
-    .select("role, content")
+  const { data, error } = await supabase
+    .from("line_ca_sessions")
+    .select("history")
     .eq("user_id", userId)
-    .order("created_at", { ascending: true })
-    .limit(10);
+    .single();
 
-  return data || [];
+  if (error && error.code !== "PGRST116") {
+    throw error;
+  }
+
+  return data?.history || [];
 }
 
 // ===== 履歴保存 =====
-async function saveMessage(userId, role, content) {
-  await supabase.from("messages").insert([
-    {
-      user_id: userId,
-      role,
-      content,
-    },
-  ]);
+async function saveHistory(userId, history) {
+  const { error } = await supabase.from("line_ca_sessions").upsert({
+    user_id: userId,
+    history,
+    updated_at: new Date().toISOString(),
+  });
+
+  if (error) {
+    throw error;
+  }
 }
 
 // ===== AI応答 =====
-async function getCareerAdvice(userId, userMessage) {
-  const history = await getHistory(userId);
-
-  const messages = [
-    {
-      role: "system",
-      content: `
-あなたは優秀なキャリアアドバイザーです。
-人材紹介（RA/CA）に強いです。
+async function getCareerAdvice(userMessage, history) {
+  const prompt = `
+あなたは人材業界に強いキャリアアドバイザーです。
+LINEで会話している前提で、短く・親しみやすく・実務的に答えてください。
 
 【スタイル】
 - 短く
 - 端的に
 - フレンドリー
-- 1〜3文
+- 2〜4文
 - 無駄な説明なし
 - 会話を続ける
+- 1回で質問は1つだけ
 
 【ルール】
 - 甘い評価は禁止
 - 実務ベースで話す
-- 必要なら軽く質問する
-      `,
-    },
-    ...history,
-    {
-      role: "user",
-      content: userMessage,
-    },
-  ];
+- 情報が足りない時は結論を急がない
+- 最後に自然な質問を1つ入れる
+- 同じ質問を何度も繰り返さない
+
+【過去の会話】
+${history.map((h) => `${h.role}: ${h.content}`).join("\n")}
+
+【今回の相談】
+${userMessage}
+  `.trim();
 
   const response = await openai.responses.create({
     model: process.env.OPENAI_MODEL || "gpt-5",
-    input: messages,
+    input: prompt,
   });
 
-  return response.output_text || "うまく答えられなかった。もう一度教えて🙏";
+  return response.output_text || "うまく答えられなかったです。もう少し詳しく教えてください🙏";
 }
 
 // ===== Webhook =====
@@ -176,40 +155,53 @@ app.post("/webhook", async (req, res) => {
   for (const event of events) {
     try {
       if (event.type === "message" && event.message.type === "text") {
-        const userId = event.source.userId;
+        const userId = event.source?.userId;
         const userText = event.message.text;
 
-        // 既読
-        await sendSeen(userId);
+        if (!userId) continue;
 
-        // thinking
+        // ① 即レス
         await sendThinking(event.replyToken);
 
-        // 履歴保存（ユーザー）
-        await saveMessage(userId, "user", userText);
+        // ② 履歴取得
+        let history = await getHistory(userId);
 
-        // AI応答
-        const aiReply = await getCareerAdvice(userId, userText);
+        // ③ ユーザー発言追加
+        history.push({ role: "user", content: userText });
 
-        // 履歴保存（AI）
-        await saveMessage(userId, "assistant", aiReply);
+        // 最新20件まで
+        history = history.slice(-20);
 
-        // 本返信
-        await replyMessage(event.replyToken, aiReply);
+        // ④ AI応答生成
+        const aiReply = await getCareerAdvice(userText, history);
+
+        // ⑤ AI発言も保存
+        history.push({ role: "assistant", content: aiReply });
+        history = history.slice(-20);
+
+        // ⑥ 保存
+        await saveHistory(userId, history);
+
+        // ⑦ pushで本回答
+        await pushMessage(userId, aiReply);
       }
     } catch (e) {
-      console.error(e?.response?.data || e.message || e);
+      console.error("Webhook error:", e?.response?.data || e.message || e);
+
       try {
-        await replyMessage(
-          event.replyToken,
-          "ごめん🙏 ちょっと調子悪い。もう一回送って！"
-        );
+        const userId = event.source?.userId;
+        if (userId) {
+          await pushMessage(
+            userId,
+            "ごめん、今ちょっと不安定です。少し時間をおいてもう一度送ってください🙏"
+          );
+        }
       } catch (_) {}
     }
   }
 });
 
-// ===== Render対応 =====
+// ===== 起動（Render対応）=====
 app.listen(PORT, "0.0.0.0", () => {
   console.log("Server running on port " + PORT);
 });
