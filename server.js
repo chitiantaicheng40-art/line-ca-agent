@@ -402,6 +402,10 @@ function isInterviewEndMessage(text) {
   return /面接対策終了|模擬面接終了|面接終了|通常モード|通常相談に戻る|終了/.test(text || "");
 }
 
+function shouldSwitchToNormalMode(text) {
+  return /向いている求人|求人の方向性|キャリア相談|転職相談|通常相談|通常モード|相談したい|求人を教えて|キャリアの方向性|転職の方向性/.test(text || "");
+}
+
 function detectTargetRole(text) {
   if (!text) return null;
 
@@ -602,6 +606,11 @@ app.post("/webhook", async (req, res) => {
       await showLoadingAnimation(userId, 20);
 
       const session = await getSession(userId);
+
+      // ===== 面接モード中に通常相談っぽい発言が来たら自動解除 =====
+      if (session.interview_state?.active && shouldSwitchToNormalMode(userText)) {
+        session.interview_state = defaultInterviewState();
+      }
 
       // ===== 面接モード終了 =====
       if (isInterviewEndMessage(userText)) {
