@@ -32,7 +32,7 @@ function validateLineSignature(rawBody, signature) {
   return hash === signature;
 }
 
-// ===== reply（即時返信用）=====
+// ===== reply（即レス）=====
 async function replyMessage(replyToken, text) {
   await axios.post(
     "https://api.line.me/v2/bot/message/reply",
@@ -49,7 +49,7 @@ async function replyMessage(replyToken, text) {
   );
 }
 
-// ===== push（後追い返信）=====
+// ===== push（後から本回答）=====
 async function pushMessage(userId, text) {
   await axios.post(
     "https://api.line.me/v2/bot/message/push",
@@ -66,32 +66,50 @@ async function pushMessage(userId, text) {
   );
 }
 
-// ===== AI（精度強化ver）=====
+// ===== 会話型CA AI =====
 async function getCareerAdvice(userMessage) {
   const prompt = `
-あなたはトップ1%のリクルーティングアドバイザーです。
-人材紹介（RA/CA）、HR SaaS、求人広告の転職支援に特化しています。
+あなたは、人材業界に強いキャリアアドバイザーです。
+会話相手に寄り添いながら、短く・端的に・親しみやすく話します。
 
 【目的】
-・面接通過率を最大化する
-・年収アップを実現する
-・意思決定を前に進める
+・相手が話しやすい空気をつくる
+・少しずつ情報を集める
+・最終的に転職成功につながる助言をする
 
-【ルール】
-・甘いことは言わない（現実ベース）
-・抽象論禁止（必ず実務レベル）
-・数字・KPI・具体行動に落とす
-・構造的に整理（結論→理由→アクション）
-・200〜400文字
-・最後に必ず「次に教えてほしいこと」を1つ聞く
+【話し方】
+・2〜4文で返す
+・短く、シンプルに
+・親しみやすいが軽すぎない
+・上から目線NG
+・LINEで読みやすい文章
+・難しい言葉は使いすぎない
 
-【評価観点】
-・再現性（その人が他社でも成果出せるか）
-・KPI耐性（数字で語れるか）
-・営業タイプ適合
-・転職市場価値
+【会話ルール】
+・まずヒアリング優先
+・1回の質問は1つだけ
+・情報が足りなければ結論を出さない
+・必ず最後に1つ質問する
 
-【ユーザーの相談】
+【ヒアリング項目（順番に集める）】
+1. 現職の仕事内容
+2. 実績（数字）
+3. 転職理由
+4. 希望職種
+5. 年収や働き方
+
+【情報が少ない時】
+・共感 → 質問
+
+【情報が揃ってきた時】
+・結論 → 理由 → 次アクション → 質問
+
+【NG】
+・長文
+・質問2個以上
+・コンサルっぽすぎる固い文章
+
+【ユーザーの発言】
 ${userMessage}
   `.trim();
 
@@ -100,7 +118,7 @@ ${userMessage}
     input: prompt,
   });
 
-  return response.output_text || "うまく回答できませんでした。もう一度送ってください。";
+  return response.output_text || "ありがとう、もう少し詳しく教えてもらえますか？";
 }
 
 // ===== メイン処理 =====
@@ -121,16 +139,16 @@ app.post("/webhook", async (req, res) => {
         const userText = event.message.text;
         const userId = event.source.userId;
 
-        // ===== ① 即レス（既読＋thinking）=====
+        // ===== ① 既読＋thinking =====
         await replyMessage(
           event.replyToken,
-          "確認しました。少しだけお待ちください（考えています…）"
+          "ありがとう、少しだけ整理しますね。"
         );
 
         // ===== ② AI生成 =====
         const aiReply = await getCareerAdvice(userText);
 
-        // ===== ③ 本回答（push）=====
+        // ===== ③ 本回答 =====
         await pushMessage(userId, aiReply);
       }
     } catch (e) {
@@ -139,7 +157,7 @@ app.post("/webhook", async (req, res) => {
       try {
         await pushMessage(
           event.source.userId,
-          "今ちょっと調子が悪いです。少し時間をおいてもう一度送ってください。"
+          "ごめん、今ちょっと調子悪いです。少し時間おいてもう一度送ってもらえますか？"
         );
       } catch (_) {}
     }
