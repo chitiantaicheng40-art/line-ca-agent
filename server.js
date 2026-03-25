@@ -6,7 +6,7 @@ const OpenAI = require("openai");
 const { createClient } = require("@supabase/supabase-js");
 
 const app = express();
-const PORT = process.env.PORT;
+const PORT = process.env.PORT || 10000;
 
 // ===== OpenAI =====
 const openai = new OpenAI({
@@ -52,6 +52,7 @@ async function replyMessage(replyToken, text) {
     {
       headers: {
         Authorization: `Bearer ${process.env.LINE_CHANNEL_ACCESS_TOKEN}`,
+        "Content-Type": "application/json",
       },
     }
   );
@@ -67,6 +68,7 @@ async function pushMessage(userId, text) {
     {
       headers: {
         Authorization: `Bearer ${process.env.LINE_CHANNEL_ACCESS_TOKEN}`,
+        "Content-Type": "application/json",
       },
     }
   );
@@ -76,7 +78,7 @@ async function sendThinking(replyToken) {
   await replyMessage(replyToken, "ありがとう、少しだけ整理しますね。");
 }
 
-// ===== プロフィール初期 =====
+// ===== プロフィール初期値 =====
 function defaultProfile() {
   return {
     current_job: null,
@@ -93,44 +95,7 @@ function defaultProfile() {
   };
 }
 
-// ===== セッション取得 =====
-async function getSession(userId) {
-  const { data } = await supabase
-    .from("line_ca_sessions")
-    .select("*")
-    .eq("user_id", userId)
-    .maybeSingle();
-
-  if (!data) {
-    const initial = {
-      user_id: userId,
-      history: [],
-      profile: defaultProfile(),
-      summary: "",
-      updated_at: new Date().toISOString(),
-    };
-
-    await supabase.from("line_ca_sessions").insert(initial);
-    return initial;
-  }
-
-  return {
-    user_id: data.user_id,
-    history: data.history || [],
-    profile: data.profile || defaultProfile(),
-    summary: data.summary || "",
-  };
-}
-
-// ===== 保存 =====
-async function saveSession(session) {
-  await supabase.from("line_ca_sessions").upsert({
-    ...session,
-    updated_at: new Date().toISOString(),
-  });
-}
-
-// ===== JSON安全変換 =====
+// ===== Utility =====
 function safeJsonParse(text, fallback = {}) {
   try {
     return JSON.parse(text);
@@ -145,84 +110,332 @@ function safeJsonParse(text, fallback = {}) {
   }
 }
 
-// ===== プロフィール統合 =====
 function mergeProfile(base, patch) {
   const next = { ...base };
+
   for (const key of Object.keys(next)) {
-    if (patch[key]) next[key] = patch[key];
+    const value = patch?.[key];
+    if (value === undefined || value === null) continue;
+    if (typeof value === "string" && value.trim() === "") continue;
+    next[key] = value;
   }
+
   return next;
 }
 
+function recentHistoryText(history, maxItems = 8) {
+  return history
+    .slice(-maxItems)
+    .map((m) => `${m.role === "user" ? "ユーザー" : "CA"}: ${m.content}`)
+    .join("\n");
+}
+
+// ===== セッション取得 =====
+async function getSession(userId) {
+  const { data, error } = await supabase
+    .from("line_ca_sessions")
+    .select("user_id, history, profile, summary, updated_at")
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (error) throw error;
+
+  if (!data) {
+    const initial = {
+      user_id: userId,
+      history: [],
+      profile: defaultProfile(),
+      summary: "",
+      updated_at: new Date().toISOString(),
+    };
+
+    const { error: insertError } = await supabase
+      .from("line_ca_sessions")
+      .insert(initial);
+
+    if (insertError) throw insertError;
+
+    return initial;
+  }
+
+  return {
+    user_id: data.user_id,
+    history: Array.isArray(data.history) ? data.history : [],
+    profile: data.profile || defaultProfile(),
+    summary: data.summary || "",
+    updated_at: data.updated_at,
+  };
+}
+
+// ===== 保存 =====
+async function saveSession(session) {
+  const { error } = await supabase.from("line_ca_sessions").upsert({
+    user_id: session.user_id,
+    history: session.history,
+    profile: session.profile,
+    summary: session.summary || "",
+    updated_at: new Date().toISOString(),
+  });
+
+  if (error) throw error;
+}
+
+// ===== 軽いプロフィール抽出（ルールベース） =====
+function updateProfileFromUserMessage(profile, text) {
+  const msg = (text || "").trim();
+
+  if (!profile.current_job) {
+    if (/法人営業|個人営業|営業|販売|接客|RA|CA|人事|マーケ|CS|エンジニア|事務/.test(msg)) {
+      profile.current_job = msg;
+    }
+  }
+
+  if (!profile.industry) {
+    if (/IT|SaaS|人材|広告|製造|医療|不動産|金融|物流|メーカー|HR/.test(msg)) {
+      profile.industry = msg;
+    }
+  }
+
+  if (!profile.product) {
+    if (/商材|プロダクト|サービス|SaaS|求人広告|人材紹介|IT商材/.test(msg)) {
+      profile.product = msg;
+    }
+  }
+
+  if (!profile.achievements) {
+    if (/\d/.test(msg) && /件|円|万|%|社|名|達成|売上|粗利|受注|契約/.test(msg)) {
+      profile.achievements = msg;
+    }
+  }
+
+  if (!profile.kpi) {
+    if (/KPI|目標|達成率|アポ|受注|商談|売上/.test(msg)) {
+      profile.kpi = msg;
+    }
+  }
+
+  if (!profile.reason_for_change) {
+    if (/転職|辞めたい|やめたい|年収|残業|働き方|将来|キャリア|評価|不満|提案の幅/.test(msg)) {
+      profile.reason_for_change = msg;
+    }
+  }
+
+  if (!profile.desired_role) {
+    if (/RA|CA|両面|人材営業|求人広告|HR SaaS|エンタープライズ営業|コンサル/.test(msg)) {
+      profile.desired_role = msg;
+    }
+  }
+
+  if (!profile.desired_industry) {
+    if (/人材業界|IT業界|SaaS|広告|製造|医療|HR/.test(msg)) {
+      profile.desired_industry = msg;
+    }
+  }
+
+  if (!profile.desired_salary) {
+    if (/年収|万円|希望年収/.test(msg)) {
+      profile.desired_salary = msg;
+    }
+  }
+
+  if (!profile.work_style) {
+    if (/リモート|在宅|土日|勤務地|働き方/.test(msg)) {
+      profile.work_style = msg;
+    }
+  }
+
+  if (!profile.concerns) {
+    if (/不安|心配|懸念|自信がない|迷って/.test(msg)) {
+      profile.concerns = msg;
+    }
+  }
+
+  return profile;
+}
+
 // ===== AIプロフィール抽出 =====
-async function extractProfileWithAI(profile, text) {
+async function extractProfileWithAI(currentProfile, userMessage) {
   const prompt = `
-この発言からキャリア情報をJSONで抽出してください。
-不明はnull。
+あなたはキャリア面談の情報抽出アシスタントです。
+以下のユーザー発言から、プロフィール項目をJSONで抽出してください。
+わからない項目は null のままにしてください。
+既存情報より明らかに具体的な場合だけ上書きしてよいです。
+説明文は不要、JSONのみ返してください。
 
-${text}
-  `;
+【既存プロフィール】
+${JSON.stringify(currentProfile, null, 2)}
 
-  const res = await openai.responses.create({
-    model: "gpt-5",
+【今回の発言】
+${userMessage}
+
+【出力形式】
+{
+  "current_job": null,
+  "industry": null,
+  "product": null,
+  "achievements": null,
+  "kpi": null,
+  "reason_for_change": null,
+  "desired_role": null,
+  "desired_industry": null,
+  "desired_salary": null,
+  "work_style": null,
+  "concerns": null
+}
+  `.trim();
+
+  const response = await openai.responses.create({
+    model: process.env.OPENAI_MODEL || "gpt-5",
     input: prompt,
   });
 
-  const parsed = safeJsonParse(res.output_text || "{}");
-  return mergeProfile(profile, parsed);
+  const parsed = safeJsonParse(response.output_text || "{}", {});
+  return mergeProfile(currentProfile, parsed);
 }
 
-// ===== 要約 =====
-async function summarize(summary, history) {
-  const text = history.map(h => h.content).join("\n");
-
-  const res = await openai.responses.create({
-    model: "gpt-5",
-    input: `要約して:\n${summary}\n${text}`,
-  });
-
-  return res.output_text;
+// ===== 次に聞くこと =====
+function pickNextQuestion(profile) {
+  if (!profile.current_job) {
+    return "今のお仕事って、どんな役割を担当していますか？";
+  }
+  if (!profile.achievements && !profile.kpi) {
+    return "直近の実績って、数字でいうとどんな感じですか？";
+  }
+  if (!profile.reason_for_change) {
+    return "転職したい理由って、いちばん大きいのは何ですか？";
+  }
+  if (!profile.desired_role) {
+    return "次はどんな職種を考えていますか？";
+  }
+  if (!profile.desired_salary && !profile.work_style) {
+    return "年収や働き方で、譲れない条件はありますか？";
+  }
+  return null;
 }
 
-// ===== 履歴圧縮 =====
-async function compact(session) {
-  if (session.history.length < 14) return;
-
-  const old = session.history.slice(0, -8);
-  session.summary = await summarize(session.summary, old);
-  session.history = session.history.slice(-8);
-}
-
-// ===== AI応答 =====
-async function getReply(session, userText) {
-  const recent = session.history.slice(-8)
-    .map(h => h.content)
+// ===== 会話要約 =====
+async function summarizeHistory(summary, history) {
+  const historyText = history
+    .map((m) => `${m.role === "user" ? "ユーザー" : "CA"}: ${m.content}`)
     .join("\n");
 
   const prompt = `
-あなたはトップキャリアアドバイザー。
+あなたはキャリア面談の会話要約アシスタントです。
+既存要約と今回会話を統合し、次回の面談で使える短い要約を作ってください。
 
-要約:
-${session.summary}
+要件:
+- 300〜500文字
+- 事実ベース
+- 推測は書かない
+- 以下を優先して残す
+  1. 現職/業界/営業スタイル
+  2. 実績/KPI
+  3. 転職理由
+  4. 希望条件
+  5. 懸念点
+  6. まだ未確認の論点
+- 箇条書き禁止
+- 日本語
 
-プロフィール:
-${JSON.stringify(session.profile)}
+【既存要約】
+${summary || "なし"}
 
-会話:
-${recent}
+【今回会話】
+${historyText || "なし"}
+  `.trim();
 
-ユーザー:
-${userText}
-
-短く自然に答えろ。
-`;
-
-  const res = await openai.responses.create({
-    model: "gpt-5",
+  const response = await openai.responses.create({
+    model: process.env.OPENAI_MODEL || "gpt-5",
     input: prompt,
   });
 
-  return res.output_text;
+  return (response.output_text || "").trim();
+}
+
+// ===== 履歴圧縮 =====
+async function compactSessionIfNeeded(session) {
+  if (session.history.length < 14) return session;
+
+  const oldPart = session.history.slice(0, -8);
+  const keepPart = session.history.slice(-8);
+
+  session.summary = await summarizeHistory(session.summary, oldPart);
+  session.history = keepPart;
+
+  return session;
+}
+
+// ===== AI応答 =====
+async function getCareerAdvice(session, userMessage) {
+  const historyText = recentHistoryText(session.history, 8);
+
+  const profile = session.profile;
+  const profileText = `
+現職: ${profile.current_job || "未取得"}
+業界: ${profile.industry || "未取得"}
+商材: ${profile.product || "未取得"}
+実績: ${profile.achievements || "未取得"}
+KPI: ${profile.kpi || "未取得"}
+転職理由: ${profile.reason_for_change || "未取得"}
+希望職種: ${profile.desired_role || "未取得"}
+希望業界: ${profile.desired_industry || "未取得"}
+希望年収: ${profile.desired_salary || "未取得"}
+働き方条件: ${profile.work_style || "未取得"}
+不安点: ${profile.concerns || "未取得"}
+  `.trim();
+
+  const nextQuestion = pickNextQuestion(profile);
+
+  const prompt = `
+あなたは、人材業界に強いトップクラスのキャリアアドバイザーです。
+LINEで相談対応しており、短く、親しみやすく、でも浅くなく返してください。
+
+【最重要】
+- summaryを最優先で踏まえる
+- 直近会話も踏まえる
+- 取得済み情報は繰り返し聞かない
+- 情報が足りないなら無理に結論を断定しない
+- ただし、方向性が見えるなら一言で示す
+- 友好的だが軽すぎない
+- 箇条書き禁止
+- 毎回ゼロから始めない
+
+【回答フォーマット】
+以下の順で、自然な3〜4文で答えてください。
+1. まず軽く受け止める
+2. 一言で方向性を述べる
+3. 具体的な職種 or 業界を1〜2個出す
+4. 理由を一言で添える
+5. 最後に自然な質問を1つだけ置く
+※ 情報不足でまだ方向性を絞れない場合は、無理に具体職種を断定せず、次に聞くべき1質問を優先する
+
+【これまでの要約】
+${session.summary || "まだ要約なし"}
+
+【把握済みプロフィール】
+${profileText}
+
+【直近の会話】
+${historyText || "なし"}
+
+【今回のユーザー発言】
+${userMessage}
+
+【次に聞く候補】
+${nextQuestion || "必要なら自然に深掘りしてください"}
+
+【文体】
+- そのままLINEに送れる自然な日本語
+- 丁寧すぎず、雑すぎず
+- 端的だが浅くしない
+  `.trim();
+
+  const response = await openai.responses.create({
+    model: process.env.OPENAI_MODEL || "gpt-5",
+    input: prompt,
+  });
+
+  return response.output_text || "ありがとう。もう少しだけ詳しく教えてもらえますか？";
 }
 
 // ===== Webhook =====
@@ -230,43 +443,56 @@ app.post("/webhook", async (req, res) => {
   const signature = req.headers["x-line-signature"];
 
   if (!validateLineSignature(req.rawBody, signature)) {
-    return res.status(401).end();
+    return res.status(401).send("Invalid signature");
   }
 
   res.sendStatus(200);
 
-  for (const event of req.body.events) {
-    try {
-      if (event.type !== "message") continue;
+  const events = req.body.events || [];
 
-      const userId = event.source.userId;
-      const text = event.message.text;
+  for (const event of events) {
+    try {
+      if (event.type !== "message" || event.message.type !== "text") continue;
+
+      const userId = event.source?.userId;
+      const userText = event.message.text;
+
+      if (!userId) continue;
 
       await sendThinking(event.replyToken);
 
-      let session = await getSession(userId);
+      const session = await getSession(userId);
 
-      session.profile = await extractProfileWithAI(session.profile, text);
+      session.profile = updateProfileFromUserMessage(session.profile, userText);
+      session.profile = await extractProfileWithAI(session.profile, userText);
 
-      session.history.push({ role: "user", content: text });
+      session.history.push({ role: "user", content: userText });
 
-      const reply = await getReply(session, text);
+      const aiReply = await getCareerAdvice(session, userText);
 
-      session.history.push({ role: "assistant", content: reply });
+      session.history.push({ role: "assistant", content: aiReply });
 
-      await compact(session);
+      await compactSessionIfNeeded(session);
       await saveSession(session);
 
-      await pushMessage(userId, reply);
-
+      await pushMessage(userId, aiReply);
     } catch (e) {
-      console.error(e);
-      await pushMessage(event.source.userId, "ちょっと不安定🙏");
+      console.error("Webhook error:", e?.response?.data || e.message || e);
+
+      try {
+        const userId = event.source?.userId;
+        if (userId) {
+          await pushMessage(
+            userId,
+            "ごめん、今ちょっと不安定です。少し時間をおいてもう一度送ってください🙏"
+          );
+        }
+      } catch (_) {}
     }
   }
 });
 
 // ===== 起動 =====
-app.listen(PORT, () => {
-  console.log("Server running on " + PORT);
+app.listen(PORT, "0.0.0.0", () => {
+  console.log("Server running on port " + PORT);
 });
