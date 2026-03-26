@@ -139,6 +139,18 @@ function buildWelcomeMessage() {
 まずは今のお仕事を教えてください。`;
 }
 
+function isLongTimeNoSee(updatedAt, days = 7) {
+  if (!updatedAt) return false;
+  const last = new Date(updatedAt).getTime();
+  const now = Date.now();
+  const diffDays = (now - last) / (1000 * 60 * 60 * 24);
+  return diffDays >= days;
+}
+
+function buildReengagementPrefix() {
+  return "お久しぶりです。自己分析・求人提案・面接対策ができます。今の内容も踏まえてお答えしますね。\n\n";
+}
+
 function safeJsonParse(text, fallback = {}) {
   try {
     return JSON.parse(text);
@@ -665,6 +677,11 @@ app.post("/webhook", async (req, res) => {
 
       await showLoading(userId);
 
+      let reengagementPrefix = "";
+      if (isLongTimeNoSee(session.updated_at, 7)) {
+        reengagementPrefix = buildReengagementPrefix();
+      }
+
       // 面接終了
       if (isInterviewEnd(text)) {
         session.interview_state = defaultInterviewState();
@@ -675,7 +692,7 @@ app.post("/webhook", async (req, res) => {
         await saveSession(session);
 
         await replyMessage(replyToken, "確認中です");
-        await pushMessage(userId, msg);
+        await pushMessage(userId, reengagementPrefix + msg);
         continue;
       }
 
@@ -688,7 +705,7 @@ app.post("/webhook", async (req, res) => {
           await saveSession(session);
 
           await replyMessage(replyToken, "確認中です");
-          await pushMessage(userId, msg);
+          await pushMessage(userId, reengagementPrefix + msg);
           continue;
         }
 
@@ -708,7 +725,7 @@ app.post("/webhook", async (req, res) => {
         await saveSession(session);
 
         await replyMessage(replyToken, "確認中です");
-        await pushMessage(userId, msg);
+        await pushMessage(userId, reengagementPrefix + msg);
         continue;
       }
 
@@ -728,7 +745,7 @@ app.post("/webhook", async (req, res) => {
         await saveSession(session);
 
         await replyMessage(replyToken, "確認中です");
-        await pushMessage(userId, result.reply);
+        await pushMessage(userId, reengagementPrefix + result.reply);
         continue;
       }
 
@@ -740,7 +757,7 @@ app.post("/webhook", async (req, res) => {
           await replyMessage(replyToken, "確認中です");
           await pushMessage(
             userId,
-            "直前のおすすめ求人がまだありません。まずは『RA 東京 500万以上』のように送ってください。"
+            reengagementPrefix + "直前のおすすめ求人がまだありません。まずは『RA 東京 500万以上』のように送ってください。"
           );
           continue;
         }
@@ -748,7 +765,8 @@ app.post("/webhook", async (req, res) => {
         await replyMessage(replyToken, "確認中です");
         await pushMessage(
           userId,
-          `${job.company}｜${job.title}
+          reengagementPrefix +
+            `${job.company}｜${job.title}
 ${job.apply_url}`
         );
         continue;
@@ -770,7 +788,7 @@ ${job.apply_url}`
           await saveSession(session);
 
           await replyMessage(replyToken, "確認中です");
-          await pushMessage(userId, msg);
+          await pushMessage(userId, reengagementPrefix + msg);
           continue;
         }
 
@@ -796,7 +814,7 @@ ${job.apply_url}`
 
         await replyMessage(replyToken, "確認中です");
         await pushMessage(userId, [
-          { type: "text", text: reason },
+          { type: "text", text: reengagementPrefix + reason },
           { type: "text", text: buildPreviewText(topJob) },
           buildJobButtons(topJob),
         ]);
@@ -817,7 +835,7 @@ ${job.apply_url}`
       await saveSession(session);
 
       await replyMessage(replyToken, "確認中です");
-      await pushMessage(userId, reply);
+      await pushMessage(userId, reengagementPrefix + reply);
     } catch (e) {
       console.error("Webhook error:", e?.response?.data || e.message || e);
 
