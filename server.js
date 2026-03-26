@@ -75,7 +75,7 @@ async function pushMessage(userId, text) {
 }
 
 // ===== LINEローディング表示 =====
-async function showLoadingAnimation(chatId, seconds = 20) {
+async function showLoadingAnimation(chatId, seconds = 5) {
   try {
     await axios.post(
       "https://api.line.me/v2/bot/chat/loading/start",
@@ -603,7 +603,7 @@ app.post("/webhook", async (req, res) => {
 
       if (!userId || !replyToken) continue;
 
-      await showLoadingAnimation(userId, 20);
+      await showLoadingAnimation(userId, 5);
 
       const session = await getSession(userId);
 
