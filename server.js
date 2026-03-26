@@ -169,7 +169,7 @@ function recentHistoryText(history, maxItems = 8) {
 async function getSession(userId) {
   const { data, error } = await supabase
     .from("line_ca_sessions")
-    .select("user_id, history, profile, summary, updated_at")
+    .select("user_id, history, profile, summary, updated_at, last_recommended_job")
     .eq("user_id", userId)
     .maybeSingle();
 
@@ -181,6 +181,7 @@ async function getSession(userId) {
       history: [],
       profile: defaultProfile(),
       summary: "",
+      last_recommended_job: null,
       updated_at: new Date().toISOString(),
     };
 
@@ -198,6 +199,7 @@ async function getSession(userId) {
     history: Array.isArray(data.history) ? data.history : [],
     profile: data.profile || defaultProfile(),
     summary: data.summary || "",
+    last_recommended_job: data.last_recommended_job || null,
     updated_at: data.updated_at,
   };
 }
@@ -208,6 +210,7 @@ async function saveSession(session) {
     history: session.history,
     profile: session.profile,
     summary: session.summary || "",
+    last_recommended_job: session.last_recommended_job || null,
     updated_at: new Date().toISOString(),
   });
 
@@ -367,9 +370,13 @@ ${userMessage}
 
 // ===== 求人検索 =====
 function isJobSearchMessage(text) {
-  return /求人探して|求人教えて|仕事探し|求人提案|RA|CA|SaaS|東京|大阪|年収|万円|フルリモート|在宅/.test(
+  return /求人探して|求人教えて|仕事探し|求人提案|RA|CA|SaaS|東京|大阪|福岡|年収|万円|フルリモート|在宅|人材|IT/.test(
     text || ""
   );
+}
+
+function isApplyIntentMessage(text) {
+  return /応募したい|応募する|この求人に応募したい|応募URL|URL送って|詳細URL/.test(text || "");
 }
 
 function parseJobSearchCondition(text) {
@@ -383,9 +390,9 @@ function parseJobSearchCondition(text) {
   else if (/福岡/.test(raw)) location = "福岡";
 
   let jobType = null;
-  if (/RA/.test(raw)) jobType = "RA";
+  if (/RA\/CA|両面/.test(raw)) jobType = "RA/CA";
+  else if (/RA/.test(raw)) jobType = "RA";
   else if (/CA/.test(raw)) jobType = "CA";
-  else if (/両面/.test(raw)) jobType = "RA/CA";
   else if (/人事/.test(raw)) jobType = "採用人事";
 
   let keyword = null;
@@ -408,7 +415,7 @@ async function searchJobsInSupabase(condition) {
     .select("*")
     .eq("is_active", true)
     .order("salary_max", { ascending: false })
-    .limit(10);
+    .limit(20);
 
   if (condition.location) {
     query = query.ilike("location", `%${condition.location}%`);
@@ -418,15 +425,21 @@ async function searchJobsInSupabase(condition) {
     query = query.ilike("job_type", `%${condition.jobType}%`);
   }
 
-  if (condition.minSalary) {
-    query = query.gte("salary_max", condition.minSalary);
-  }
-
   const { data, error } = await query;
   if (error) throw error;
 
   let jobs = data || [];
 
+  // 年収条件: salary_min または salary_max のどちらかが条件以上なら候補に残す
+  if (condition.minSalary) {
+    jobs = jobs.filter((job) => {
+      const min = Number(job.salary_min || 0);
+      const max = Number(job.salary_max || 0);
+      return min >= condition.minSalary || max >= condition.minSalary;
+    });
+  }
+
+  // キーワード条件
   if (condition.keyword) {
     jobs = jobs.filter((job) => {
       const blob = [
@@ -438,8 +451,10 @@ async function searchJobsInSupabase(condition) {
         job.requirements,
       ]
         .filter(Boolean)
-        .join(" ");
-      return blob.toLowerCase().includes(condition.keyword.toLowerCase());
+        .join(" ")
+        .toLowerCase();
+
+      return blob.includes(condition.keyword.toLowerCase());
     });
   }
 
@@ -484,7 +499,7 @@ ${JSON.stringify(jobs, null, 2)}
 
   return (
     response.output_text ||
-    "現時点ではROSCAのリクルーティングアドバイザーが最有力です。次点でQuicker、3番手でグラファーです。まずはROSCAから受ける前提で進めたいですが、年収は600万円以上を絶対条件にしたいですか？"
+    "現時点では最有力求人が見えています。まずはその求人から受ける前提で進めるのが良さそうですが、年収は絶対条件ですか？"
   ).trim();
 }
 
@@ -495,9 +510,18 @@ function buildJobsPreview(jobs) {
         job.salary_min && job.salary_max
           ? `${job.salary_min}〜${job.salary_max}万円`
           : "要確認";
-      return `${index + 1}. ${job.company}｜${job.title}｜${job.location || "勤務地要確認"}｜${salary}`;
+
+      const urlText = job.apply_url ? `応募URL: ${job.apply_url}` : "応募URL: 未設定";
+
+      return `${index + 1}. ${job.company}｜${job.title}｜${job.location || "勤務地要確認"}｜${salary}
+${urlText}`;
     })
-    .join("\n");
+    .join("\n\n");
+}
+
+function pickTopJob(jobs) {
+  if (!Array.isArray(jobs) || jobs.length === 0) return null;
+  return jobs[0];
 }
 
 // ===== Webhook =====
@@ -534,7 +558,33 @@ app.post("/webhook", async (req, res) => {
 
       await showLoadingAnimation(userId, 5);
 
-      // 実在求人検索モード
+      // 応募URL返却
+      if (isApplyIntentMessage(userText)) {
+        const job = session.last_recommended_job;
+
+        let reply;
+        if (job && job.apply_url) {
+          reply = `応募するならこちらです。
+${job.company}｜${job.title}
+${job.apply_url}
+
+応募前に職務経歴書の添削や志望動機の整理もできます。必要ならそのまま送ってください。`;
+        } else if (job) {
+          reply = `直前のおすすめ求人は ${job.company}｜${job.title} ですが、応募URLがまだ登録されていません。URLを設定すればすぐ返せるようになります。`;
+        } else {
+          reply = "まだ直前におすすめした求人がありません。まずは『RA 東京 500万以上』のように条件を送ってください。";
+        }
+
+        session.history.push({ role: "user", content: userText });
+        session.history.push({ role: "assistant", content: reply });
+        await saveSession(session);
+
+        await replyMessage(replyToken, "確認中です");
+        await pushMessage(userId, reply);
+        continue;
+      }
+
+      // 実在求人検索
       if (isJobSearchMessage(userText)) {
         const condition = parseJobSearchCondition(userText);
         const jobs = await searchJobsInSupabase(condition);
@@ -543,10 +593,27 @@ app.post("/webhook", async (req, res) => {
         if (!jobs.length) {
           result =
             "条件に合う求人がまだ見つかりませんでした。職種、勤務地、年収条件を少し広げると提案しやすいです。たとえば『RA 東京 500万以上』のように送ってもらえますか？";
+          session.last_recommended_job = null;
         } else {
           const ranking = await recommendRealJobs(session, userText, jobs);
           const preview = buildJobsPreview(jobs);
-          result = `${ranking}\n\n候補求人はこちらです。\n${preview}`;
+          const topJob = pickTopJob(jobs);
+
+          session.last_recommended_job = topJob
+            ? {
+                id: topJob.id,
+                title: topJob.title,
+                company: topJob.company,
+                apply_url: topJob.apply_url,
+              }
+            : null;
+
+          result = `${ranking}
+
+候補求人はこちらです。
+${preview}
+
+気になる求人があれば「応募したい」と送ってください。最有力求人の応募URLを返します。`;
         }
 
         session.history.push({ role: "user", content: userText });
