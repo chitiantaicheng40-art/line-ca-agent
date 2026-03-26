@@ -26,43 +26,17 @@ app.use(
   })
 );
 
-app.get("/", (req, res) => {
-  res.send("CA BOT OK");
-});
+app.get("/", (req, res) => res.send("OK"));
 
-// ===== 初回メッセージ =====
-function buildWelcomeMessage() {
-  return `はじめまして！TAKARA AI Careerです。
-
-このエージェントでは、あなたのキャリアに合わせて以下のサポートができます。
-
-① 自己分析
-② 向いている求人の方向性提案
-③ 面接対策
-④ この求人どう？の適合チェック
-⑤ 実在求人の提案
-
-たとえば
-・「転職相談したい」
-・「面接対策したい」
-・「この求人どう？」
-・「RA 東京 600万以上」
-
-など、自由に送ってください。
-
-まずは、今どんな仕事をしているか教えてもらえますか？`;
-}
-
-// ===== LINE署名 =====
-function validateLineSignature(rawBody, signature) {
+// ===== LINE =====
+function validateLineSignature(body, signature) {
   const hash = crypto
     .createHmac("SHA256", process.env.LINE_CHANNEL_SECRET)
-    .update(rawBody)
+    .update(body)
     .digest("base64");
   return hash === signature;
 }
 
-// ===== LINE送信 =====
 async function replyMessage(replyToken, text) {
   await axios.post(
     "https://api.line.me/v2/bot/message/reply",
@@ -73,7 +47,6 @@ async function replyMessage(replyToken, text) {
     {
       headers: {
         Authorization: `Bearer ${process.env.LINE_CHANNEL_ACCESS_TOKEN}`,
-        "Content-Type": "application/json",
       },
     }
   );
@@ -89,579 +62,181 @@ async function pushMessage(userId, text) {
     {
       headers: {
         Authorization: `Bearer ${process.env.LINE_CHANNEL_ACCESS_TOKEN}`,
-        "Content-Type": "application/json",
       },
     }
   );
 }
 
-async function showLoadingAnimation(chatId, seconds = 5) {
+async function showLoading(userId) {
   try {
     await axios.post(
       "https://api.line.me/v2/bot/chat/loading/start",
-      {
-        chatId,
-        loadingSeconds: Math.max(5, Math.min(seconds, 60)),
-      },
+      { chatId: userId, loadingSeconds: 5 },
       {
         headers: {
           Authorization: `Bearer ${process.env.LINE_CHANNEL_ACCESS_TOKEN}`,
-          "Content-Type": "application/json",
         },
       }
     );
-  } catch (e) {
-    console.error("Loading animation error:", e?.response?.data || e.message || e);
-  }
+  } catch (e) {}
 }
 
-// ===== 初期値 =====
-function defaultProfile() {
-  return {
-    current_job: null,
-    industry: null,
-    product: null,
-    achievements: null,
-    kpi: null,
-    reason_for_change: null,
-    desired_role: null,
-    desired_industry: null,
-    desired_salary: null,
-    work_style: null,
-    concerns: null,
-  };
+// ===== 判定 =====
+function isJobSearch(text) {
+  return /RA|求人|仕事|転職|年収|万|東京|大阪|福岡/i.test(text);
 }
 
-// ===== Utility =====
-function safeJsonParse(text, fallback = {}) {
-  try {
-    return JSON.parse(text);
-  } catch (_) {
-    const match = text.match(/\{[\s\S]*\}/);
-    if (!match) return fallback;
-    try {
-      return JSON.parse(match[0]);
-    } catch (_) {
-      return fallback;
-    }
-  }
+function isApply(text) {
+  return /応募|URL|応募したい/i.test(text);
 }
 
-function mergeProfile(base, patch) {
-  const next = { ...base };
-  for (const key of Object.keys(next)) {
-    const value = patch?.[key];
-    if (value === undefined || value === null) continue;
-    if (typeof value === "string" && value.trim() === "") continue;
-    next[key] = value;
-  }
-  return next;
-}
-
-function recentHistoryText(history, maxItems = 8) {
-  return history
-    .slice(-maxItems)
-    .map((m) => `${m.role === "user" ? "ユーザー" : "CA"}: ${m.content}`)
-    .join("\n");
-}
-
-// ===== セッション =====
-async function getSession(userId) {
-  const { data, error } = await supabase
-    .from("line_ca_sessions")
-    .select("user_id, history, profile, summary, updated_at, last_recommended_job")
-    .eq("user_id", userId)
-    .maybeSingle();
-
-  if (error) throw error;
-
-  if (!data) {
-    const init = {
-      user_id: userId,
-      history: [],
-      profile: defaultProfile(),
-      summary: "",
-      last_recommended_job: null,
-      updated_at: new Date().toISOString(),
-    };
-
-    const { error: insertError } = await supabase
-      .from("line_ca_sessions")
-      .insert(init);
-
-    if (insertError) throw insertError;
-
-    return init;
-  }
-
-  return {
-    user_id: data.user_id,
-    history: Array.isArray(data.history) ? data.history : [],
-    profile: data.profile || defaultProfile(),
-    summary: data.summary || "",
-    last_recommended_job: data.last_recommended_job || null,
-    updated_at: data.updated_at,
-  };
-}
-
-async function saveSession(session) {
-  const { error } = await supabase.from("line_ca_sessions").upsert({
-    user_id: session.user_id,
-    history: session.history,
-    profile: session.profile,
-    summary: session.summary || "",
-    last_recommended_job: session.last_recommended_job || null,
-    updated_at: new Date().toISOString(),
-  });
-
-  if (error) throw error;
-}
-
-// ===== プロフィール抽出 =====
-function updateProfileFromUserMessage(profile, text) {
-  const msg = (text || "").trim();
-
-  if (!profile.current_job) {
-    if (/法人営業|個人営業|営業|販売|接客|RA|CA|人事|マーケ|CS|カスタマーサクセス|エンジニア|事務/.test(msg)) {
-      profile.current_job = msg;
-    }
-  }
-
-  if (!profile.industry) {
-    if (/IT|SaaS|人材|広告|製造|医療|不動産|金融|物流|メーカー|HR/.test(msg)) {
-      profile.industry = msg;
-    }
-  }
-
-  if (!profile.product) {
-    if (/商材|プロダクト|サービス|SaaS|求人広告|人材紹介|IT商材/.test(msg)) {
-      profile.product = msg;
-    }
-  }
-
-  if (!profile.achievements) {
-    if (/\d/.test(msg) && /件|円|万|%|社|名|達成|売上|粗利|受注|契約/.test(msg)) {
-      profile.achievements = msg;
-    }
-  }
-
-  if (!profile.kpi) {
-    if (/KPI|目標|達成率|アポ|受注|商談|売上/.test(msg)) {
-      profile.kpi = msg;
-    }
-  }
-
-  if (!profile.reason_for_change) {
-    if (/転職|辞めたい|やめたい|年収|残業|働き方|将来|キャリア|評価|不満|提案の幅/.test(msg)) {
-      profile.reason_for_change = msg;
-    }
-  }
-
-  if (!profile.desired_role) {
-    if (/RA|CA|両面|人材営業|求人広告|HR SaaS|エンタープライズ営業|コンサル|カスタマーサクセス|CS/.test(msg)) {
-      profile.desired_role = msg;
-    }
-  }
-
-  if (!profile.desired_industry) {
-    if (/人材業界|IT業界|SaaS|広告|製造|医療|HR/.test(msg)) {
-      profile.desired_industry = msg;
-    }
-  }
-
-  if (!profile.desired_salary) {
-    if (/年収|万円|希望年収/.test(msg)) {
-      profile.desired_salary = msg;
-    }
-  }
-
-  if (!profile.work_style) {
-    if (/リモート|在宅|土日|勤務地|働き方/.test(msg)) {
-      profile.work_style = msg;
-    }
-  }
-
-  if (!profile.concerns) {
-    if (/不安|心配|懸念|自信がない|迷って/.test(msg)) {
-      profile.concerns = msg;
-    }
-  }
-
-  return profile;
-}
-
-async function extractProfileWithAI(currentProfile, userMessage) {
-  const prompt = `
-あなたはキャリア面談の情報抽出アシスタントです。
-以下のユーザー発言から、プロフィール項目をJSONで抽出してください。
-わからない項目は null のままにしてください。
-既存情報より明らかに具体的な場合だけ上書きしてよいです。
-説明文は不要、JSONのみ返してください。
-
-【既存プロフィール】
-${JSON.stringify(currentProfile, null, 2)}
-
-【今回の発言】
-${userMessage}
-
-【出力形式】
-{
-  "current_job": null,
-  "industry": null,
-  "product": null,
-  "achievements": null,
-  "kpi": null,
-  "reason_for_change": null,
-  "desired_role": null,
-  "desired_industry": null,
-  "desired_salary": null,
-  "work_style": null,
-  "concerns": null
-}
-  `.trim();
-
-  const response = await openai.responses.create({
-    model: process.env.OPENAI_MODEL || "gpt-5",
-    input: prompt,
-  });
-
-  const parsed = safeJsonParse(response.output_text || "{}", {});
-  return mergeProfile(currentProfile, parsed);
-}
-
-// ===== 通常相談 =====
-async function getCareerAdvice(session, userMessage) {
-  const historyText = recentHistoryText(session.history, 8);
-  const profile = session.profile;
-
-  const prompt = `
-あなたは、人材業界に強いトップクラスのキャリアアドバイザーです。
-LINEで相談対応しており、短く、親しみやすく、でも浅くなく返してください。
-
-【最重要】
-- summaryを最優先で踏まえる
-- 直近会話も踏まえる
-- 取得済み情報は繰り返し聞かない
-- 情報が足りないなら無理に結論を断定しない
-- ただし方向性が見えるなら一言で示す
-- 箇条書き禁止
-- 3〜4文で返す
-
-【これまでの要約】
-${session.summary || "まだ要約なし"}
-
-【把握済みプロフィール】
-${JSON.stringify(profile, null, 2)}
-
-【直近の会話】
-${historyText || "なし"}
-
-【今回のユーザー発言】
-${userMessage}
-  `.trim();
-
-  const response = await openai.responses.create({
-    model: process.env.OPENAI_MODEL || "gpt-5",
-    input: prompt,
-  });
-
-  return response.output_text || "ありがとう。もう少しだけ詳しく教えてもらえますか？";
-}
-
-// ===== 求人検索 =====
-function isJobSearchMessage(text) {
-  return /求人探して|求人教えて|仕事探し|求人提案|RA|CA|SaaS|東京|大阪|福岡|年収|万円|フルリモート|在宅|人材|IT/.test(
-    text || ""
-  );
-}
-
-function isApplyIntentMessage(text) {
-  return /応募したい|応募する|この求人に応募したい|応募URL|URL送って|詳細URL/.test(text || "");
-}
-
-function parseJobSearchCondition(text) {
-  const raw = text || "";
-  const salaryMatch = raw.match(/(\d{3,4})\s*万/);
+// ===== 条件抽出 =====
+function parseCondition(text) {
+  const salaryMatch = text.match(/(\d{3,4})\s*万/);
   const minSalary = salaryMatch ? Number(salaryMatch[1]) : null;
 
   let location = null;
-  if (/東京/.test(raw)) location = "東京";
-  else if (/大阪/.test(raw)) location = "大阪";
-  else if (/福岡/.test(raw)) location = "福岡";
+  if (/東京/.test(text)) location = "東京";
+  if (/大阪/.test(text)) location = "大阪";
 
-  let jobType = null;
-  if (/RA\/CA|両面/.test(raw)) jobType = "RA/CA";
-  else if (/RA/.test(raw)) jobType = "RA";
-  else if (/CA/.test(raw)) jobType = "CA";
-  else if (/人事/.test(raw)) jobType = "採用人事";
-
-  let keyword = null;
-  if (/SaaS/i.test(raw)) keyword = "SaaS";
-  else if (/人材/.test(raw)) keyword = "人材";
-  else if (/IT/.test(raw)) keyword = "IT";
-
-  return {
-    raw,
-    minSalary,
-    location,
-    jobType,
-    keyword,
-  };
+  return { minSalary, location, raw: text };
 }
 
-async function searchJobsInSupabase(condition) {
-  let query = supabase
+// ===== 求人検索 =====
+async function searchJobs(condition) {
+  let { data } = await supabase
     .from("jobs")
     .select("*")
-    .eq("is_active", true)
-    .order("salary_max", { ascending: false })
-    .limit(20);
-
-  if (condition.location) {
-    query = query.ilike("location", `%${condition.location}%`);
-  }
-
-  if (condition.jobType) {
-    query = query.ilike("job_type", `%${condition.jobType}%`);
-  }
-
-  const { data, error } = await query;
-  if (error) throw error;
+    .eq("is_active", true);
 
   let jobs = data || [];
 
-  // 年収条件: salary_min または salary_max のどちらかが条件以上なら候補に残す
+  // 年収フィルタ
   if (condition.minSalary) {
-    jobs = jobs.filter((job) => {
-      const min = Number(job.salary_min || 0);
-      const max = Number(job.salary_max || 0);
-      return min >= condition.minSalary || max >= condition.minSalary;
+    jobs = jobs.filter((j) => {
+      return (
+        (j.salary_min || 0) >= condition.minSalary ||
+        (j.salary_max || 0) >= condition.minSalary
+      );
     });
   }
 
-  // キーワード条件
-  if (condition.keyword) {
-    jobs = jobs.filter((job) => {
-      const blob = [
-        job.title,
-        job.company,
-        job.job_type,
-        job.industry,
-        job.description,
-        job.requirements,
-      ]
-        .filter(Boolean)
-        .join(" ")
-        .toLowerCase();
-
-      return blob.includes(condition.keyword.toLowerCase());
-    });
+  // 勤務地フィルタ
+  if (condition.location) {
+    jobs = jobs.filter((j) =>
+      (j.location || "").includes(condition.location)
+    );
   }
+
+  // ★重要：全文マッチ
+  jobs = jobs.filter((job) => {
+    const text = [
+      job.title,
+      job.company,
+      job.job_type,
+      job.industry,
+      job.description,
+    ]
+      .join(" ")
+      .toLowerCase();
+
+    return (
+      text.includes("ra") ||
+      text.includes("リクルーティング") ||
+      text.includes("人材")
+    );
+  });
 
   return jobs.slice(0, 3);
 }
 
-async function recommendRealJobs(session, userCondition, jobs) {
-  const profile = session.profile || defaultProfile();
-
-  const prompt = `
-あなたは世界一のリクルーティングアドバイザーです。
-候補者プロフィールと求人一覧を比較し、どの求人を優先して受けるべきか判断してください。
-
-【候補者プロフィール】
-${JSON.stringify(profile, null, 2)}
-
-【会話要約】
-${session.summary || "なし"}
-
-【検索条件】
-${userCondition}
-
-【求人一覧】
-${JSON.stringify(jobs, null, 2)}
-
-【出力ルール】
-- 6〜8文
-- 箇条書き禁止
-- 1文目で最有力を断定
-- 2〜4文目で1位〜3位の理由
-- 5文目で共通の懸念点
-- 6文目で最初に応募すべき求人を断定
-- 最後に1つだけ確認質問
-- 求人名は会社名と職種名を自然に入れる
-- 甘い評価は禁止
-  `.trim();
-
-  const response = await openai.responses.create({
-    model: process.env.OPENAI_MODEL || "gpt-5",
-    input: prompt,
-  });
-
-  return (
-    response.output_text ||
-    "現時点では最有力求人が見えています。まずはその求人から受ける前提で進めるのが良さそうですが、年収は絶対条件ですか？"
-  ).trim();
-}
-
-function buildJobsPreview(jobs) {
+// ===== 表示 =====
+function buildPreview(jobs) {
   return jobs
-    .map((job, index) => {
-      const salary =
-        job.salary_min && job.salary_max
-          ? `${job.salary_min}〜${job.salary_max}万円`
-          : "要確認";
-
-      const urlText = job.apply_url ? `応募URL: ${job.apply_url}` : "応募URL: 未設定";
-
-      return `${index + 1}. ${job.company}｜${job.title}｜${job.location || "勤務地要確認"}｜${salary}
-${urlText}`;
+    .map((j, i) => {
+      return `${i + 1}. ${j.company}｜${j.title}
+年収: ${j.salary_min}〜${j.salary_max}万
+URL: ${j.apply_url || "未設定"}`;
     })
     .join("\n\n");
-}
-
-function pickTopJob(jobs) {
-  if (!Array.isArray(jobs) || jobs.length === 0) return null;
-  return jobs[0];
 }
 
 // ===== Webhook =====
 app.post("/webhook", async (req, res) => {
   const signature = req.headers["x-line-signature"];
   if (!validateLineSignature(req.rawBody, signature)) {
-    return res.status(401).send("Invalid signature");
+    return res.status(401).send("Invalid");
   }
 
   res.sendStatus(200);
 
-  const events = req.body.events || [];
+  const event = req.body.events[0];
+  if (!event) return;
 
-  for (const event of events) {
-    try {
-      if (event.type !== "message" || event.message.type !== "text") continue;
+  const userId = event.source.userId;
+  const text = event.message.text;
 
-      const userId = event.source?.userId;
-      const userText = event.message.text;
-      const replyToken = event.replyToken;
+  await showLoading(userId);
 
-      if (!userId || !replyToken) continue;
+  // ===== 応募 =====
+  if (isApply(text)) {
+    const { data } = await supabase
+      .from("line_ca_sessions")
+      .select("last_recommended_job")
+      .eq("user_id", userId)
+      .single();
 
-      const session = await getSession(userId);
+    const job = data?.last_recommended_job;
 
-      // 初回
-      if (!session.history || session.history.length === 0) {
-        const welcome = buildWelcomeMessage();
-        session.history = [{ role: "assistant", content: welcome }];
-        await saveSession(session);
-        await replyMessage(replyToken, welcome);
-        continue;
-      }
-
-      await showLoadingAnimation(userId, 5);
-
-      // 応募URL返却
-      if (isApplyIntentMessage(userText)) {
-        const job = session.last_recommended_job;
-
-        let reply;
-        if (job && job.apply_url) {
-          reply = `応募するならこちらです。
-${job.company}｜${job.title}
-${job.apply_url}
-
-応募前に職務経歴書の添削や志望動機の整理もできます。必要ならそのまま送ってください。`;
-        } else if (job) {
-          reply = `直前のおすすめ求人は ${job.company}｜${job.title} ですが、応募URLがまだ登録されていません。URLを設定すればすぐ返せるようになります。`;
-        } else {
-          reply = "まだ直前におすすめした求人がありません。まずは『RA 東京 500万以上』のように条件を送ってください。";
-        }
-
-        session.history.push({ role: "user", content: userText });
-        session.history.push({ role: "assistant", content: reply });
-        await saveSession(session);
-
-        await replyMessage(replyToken, "確認中です");
-        await pushMessage(userId, reply);
-        continue;
-      }
-
-      // 実在求人検索
-      if (isJobSearchMessage(userText)) {
-        const condition = parseJobSearchCondition(userText);
-        const jobs = await searchJobsInSupabase(condition);
-
-        let result;
-        if (!jobs.length) {
-          result =
-            "条件に合う求人がまだ見つかりませんでした。職種、勤務地、年収条件を少し広げると提案しやすいです。たとえば『RA 東京 500万以上』のように送ってもらえますか？";
-          session.last_recommended_job = null;
-        } else {
-          const ranking = await recommendRealJobs(session, userText, jobs);
-          const preview = buildJobsPreview(jobs);
-          const topJob = pickTopJob(jobs);
-
-          session.last_recommended_job = topJob
-            ? {
-                id: topJob.id,
-                title: topJob.title,
-                company: topJob.company,
-                apply_url: topJob.apply_url,
-              }
-            : null;
-
-          result = `${ranking}
-
-候補求人はこちらです。
-${preview}
-
-気になる求人があれば「応募したい」と送ってください。最有力求人の応募URLを返します。`;
-        }
-
-        session.history.push({ role: "user", content: userText });
-        session.history.push({ role: "assistant", content: result });
-        await saveSession(session);
-
-        await replyMessage(replyToken, "確認中です");
-        await pushMessage(userId, result);
-        continue;
-      }
-
-      // 通常相談
-      session.profile = updateProfileFromUserMessage(session.profile, userText);
-      session.profile = await extractProfileWithAI(session.profile, userText);
-
-      session.history.push({ role: "user", content: userText });
-
-      const aiReply = await getCareerAdvice(session, userText);
-
-      session.history.push({ role: "assistant", content: aiReply });
-
-      await saveSession(session);
-
-      await replyMessage(replyToken, "確認中です");
-      await pushMessage(userId, aiReply);
-    } catch (e) {
-      console.error("Webhook error:", e?.response?.data || e.message || e);
-
-      try {
-        const userId = event.source?.userId;
-        const replyToken = event.replyToken;
-
-        if (replyToken) {
-          await replyMessage(replyToken, "確認中です");
-        }
-
-        if (userId) {
-          await pushMessage(
-            userId,
-            "ごめん、今ちょっと不安定です。少し時間をおいてもう一度送ってください🙏"
-          );
-        }
-      } catch (_) {}
+    if (job?.apply_url) {
+      await replyMessage(event.replyToken, "確認中です");
+      await pushMessage(
+        userId,
+        `${job.company}｜${job.title}
+${job.apply_url}`
+      );
+    } else {
+      await replyMessage(event.replyToken, "求人がまだありません");
     }
+    return;
   }
+
+  // ===== 求人検索 =====
+  if (isJobSearch(text)) {
+    const condition = parseCondition(text);
+    const jobs = await searchJobs(condition);
+
+    if (!jobs.length) {
+      await replyMessage(event.replyToken, "確認中です");
+      await pushMessage(userId, "求人が見つかりませんでした");
+      return;
+    }
+
+    const topJob = jobs[0];
+
+    await supabase.from("line_ca_sessions").upsert({
+      user_id: userId,
+      last_recommended_job: topJob,
+    });
+
+    const preview = buildPreview(jobs);
+
+    await replyMessage(event.replyToken, "確認中です");
+    await pushMessage(
+      userId,
+      `${preview}
+
+気になる求人があれば「応募したい」と送ってください`
+    );
+
+    return;
+  }
+
+  // ===== その他 =====
+  await replyMessage(event.replyToken, "相談内容をもう少し詳しく教えてください");
 });
 
 // ===== 起動 =====
-app.listen(PORT, "0.0.0.0", () => {
-  console.log("Server running on port " + PORT);
+app.listen(PORT, () => {
+  console.log("Server running");
 });
