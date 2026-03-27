@@ -56,7 +56,7 @@ async function replyToLine(replyToken, text) {
         messages: [
           {
             type: "text",
-            text: text.slice(0, 5000),
+            text: String(text || "").slice(0, 5000),
           },
         ],
       },
@@ -69,32 +69,6 @@ async function replyToLine(replyToken, text) {
     );
   } catch (error) {
     console.error("LINE reply error:", error.response?.data || error.message);
-  }
-}
-
-// ===== LINE Push (optional) =====
-async function pushToLine(userId, text) {
-  try {
-    await axios.post(
-      "https://api.line.me/v2/bot/message/push",
-      {
-        to: userId,
-        messages: [
-          {
-            type: "text",
-            text: text.slice(0, 5000),
-          },
-        ],
-      },
-      {
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${LINE_CHANNEL_ACCESS_TOKEN}`,
-        },
-      }
-    );
-  } catch (error) {
-    console.error("LINE push error:", error.response?.data || error.message);
   }
 }
 
@@ -217,7 +191,11 @@ function detectFinishedTopic(text = "") {
   if (!t) return null;
   if (t.includes("自己分析")) return "self_analysis";
   if (t.includes("求人提案") || t.includes("求人紹介")) return "job_suggestion";
-  if (t.includes("職務経歴書") || t.includes("経験整理") || t.includes("経歴整理")) {
+  if (
+    t.includes("職務経歴書") ||
+    t.includes("経験整理") ||
+    t.includes("経歴整理")
+  ) {
     return "resume";
   }
   if (t.includes("面接対策")) return "interview";
@@ -287,6 +265,199 @@ async function saveMessage(userId, role, content) {
   }
 }
 
+// ===== Session / Profile =====
+async function getSession(userId) {
+  if (!supabase) return null;
+
+  const { data, error } = await supabase
+    .from("line_ca_sessions")
+    .select("*")
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (error) {
+    console.error("Supabase getSession error:", error.message);
+    return null;
+  }
+
+  return data;
+}
+
+async function upsertSession(userId, patch = {}) {
+  if (!supabase) return null;
+
+  const existing = await getSession(userId);
+
+  const currentProfile = existing?.profile || {};
+  const mergedProfile = {
+    ...currentProfile,
+    ...(patch.profile || {}),
+  };
+
+  const payload = {
+    user_id: userId,
+    profile: mergedProfile,
+    summary: patch.summary ?? existing?.summary ?? null,
+    interview_state: patch.interview_state ?? existing?.interview_state ?? null,
+    plan_type: patch.plan_type ?? existing?.plan_type ?? "free",
+    usage_count:
+      typeof patch.usage_count === "number"
+        ? patch.usage_count
+        : existing?.usage_count ?? 0,
+    updated_at: new Date().toISOString(),
+  };
+
+  const { data, error } = await supabase
+    .from("line_ca_sessions")
+    .upsert(payload, { onConflict: "user_id" })
+    .select()
+    .single();
+
+  if (error) {
+    console.error("Supabase upsertSession error:", error.message);
+    return null;
+  }
+
+  return data;
+}
+
+function mergeUniqueStringArray(oldArr = [], newArr = []) {
+  return [...new Set([...(oldArr || []), ...(newArr || [])])];
+}
+
+function extractProfilePatchFromUserMessage(text = "") {
+  const t = (text || "").trim();
+  if (!t) return {};
+
+  const profilePatch = {};
+
+  const expKeywords = [];
+  const interestKeywords = [];
+
+  if (t.includes("営業")) expKeywords.push("営業");
+  if (t.includes("法人営業")) expKeywords.push("法人営業");
+  if (t.includes("個人営業")) expKeywords.push("個人営業");
+  if (t.includes("企画")) interestKeywords.push("企画");
+  if (t.includes("経営企画")) interestKeywords.push("経営企画");
+  if (t.includes("事業企画")) interestKeywords.push("事業企画");
+  if (t.includes("人事")) interestKeywords.push("人事");
+  if (t.includes("マーケ")) interestKeywords.push("マーケ");
+  if (t.includes("採用")) interestKeywords.push("採用");
+
+  if (expKeywords.length > 0) {
+    profilePatch.experience_keywords = expKeywords;
+  }
+
+  if (interestKeywords.length > 0) {
+    profilePatch.interest_keywords = interestKeywords;
+  }
+
+  const salaryMatch = t.match(/(\d{3,4})\s*万/);
+  if (salaryMatch) {
+    profilePatch.desired_salary_man = Number(salaryMatch[1]);
+  }
+
+  if (
+    t.includes("フルリモート") ||
+    t.includes("リモート") ||
+    t.includes("出社") ||
+    t.includes("勤務地") ||
+    t.includes("東京") ||
+    t.includes("大阪") ||
+    t.includes("福岡")
+  ) {
+    profilePatch.work_style_note = t;
+  }
+
+  if (
+    t.includes("やりたくない") ||
+    t.includes("苦手") ||
+    t.includes("避けたい") ||
+    t.includes("嫌") ||
+    t.includes("無理")
+  ) {
+    profilePatch.ng_note = t;
+  }
+
+  if (
+    t.includes("強み") ||
+    t.includes("得意") ||
+    t.includes("できます") ||
+    t.includes("経験があります") ||
+    t.includes("実績") ||
+    t.includes("成果")
+  ) {
+    profilePatch.strength_note = t;
+  }
+
+  if (
+    t.includes("転職したい") ||
+    t.includes("辞めたい") ||
+    t.includes("転職理由") ||
+    t.includes("理由") ||
+    t.includes("将来") ||
+    t.includes("キャリア")
+  ) {
+    profilePatch.reason_note = t;
+  }
+
+  if (
+    t.includes("すぐ転職") ||
+    t.includes("早く転職") ||
+    t.includes("今すぐ") ||
+    t.includes("急いで")
+  ) {
+    profilePatch.change_timing = "high";
+  }
+
+  if (
+    t.includes("いつか") ||
+    t.includes("まだ悩んでる") ||
+    t.includes("情報収集")
+  ) {
+    profilePatch.change_timing = "low";
+  }
+
+  return profilePatch;
+}
+
+function mergeProfile(existingProfile = {}, newPatch = {}) {
+  const merged = {
+    ...existingProfile,
+    ...newPatch,
+  };
+
+  if (existingProfile.experience_keywords || newPatch.experience_keywords) {
+    merged.experience_keywords = mergeUniqueStringArray(
+      existingProfile.experience_keywords || [],
+      newPatch.experience_keywords || []
+    );
+  }
+
+  if (existingProfile.interest_keywords || newPatch.interest_keywords) {
+    merged.interest_keywords = mergeUniqueStringArray(
+      existingProfile.interest_keywords || [],
+      newPatch.interest_keywords || []
+    );
+  }
+
+  return merged;
+}
+
+async function updateUserProfile(userId, userMessage) {
+  const existing = await getSession(userId);
+  const existingProfile = existing?.profile || {};
+  const newPatch = extractProfilePatchFromUserMessage(userMessage);
+
+  if (Object.keys(newPatch).length === 0) return;
+
+  const mergedProfile = mergeProfile(existingProfile, newPatch);
+
+  await upsertSession(userId, {
+    profile: mergedProfile,
+  });
+}
+
 // ===== System Prompt =====
 const SYSTEM_PROMPT = `
 あなたは優秀なキャリアアドバイザーです。
@@ -307,15 +478,27 @@ const SYSTEM_PROMPT = `
 - 上から目線にならない
 - 不明点は決めつけず、確認ベースで伝える
 - できるだけ次の一歩が明確になるように返す
+- 保存済みプロフィールは自然に活かすが、未確定情報として扱う
 `;
 
 // ===== OpenAI Ask =====
 async function askOpenAI(userId, userMessage) {
   try {
     const history = await getRecentMessages(userId, 12);
+    const session = await getSession(userId);
+    const profile = session?.profile || {};
 
     const messages = [
-      { role: "system", content: SYSTEM_PROMPT },
+      {
+        role: "system",
+        content: SYSTEM_PROMPT,
+      },
+      {
+        role: "system",
+        content:
+          "このユーザーの現在プロフィールです。会話に自然に活かしてください。未確定情報は断定せず、確認ベースで扱ってください。\n" +
+          JSON.stringify(profile, null, 2),
+      },
       ...history.map((m) => ({
         role: m.role,
         content: m.content,
@@ -376,10 +559,13 @@ app.post("/webhook", async (req, res) => {
 
         console.log("User message:", userMessage);
 
-        // 1. ユーザー発話を保存
+        // 1. ユーザー発話保存
         await saveMessage(userId, "user", userMessage);
 
-        // 2. メニュー系の即時分岐
+        // 2. プロフィール更新
+        await updateUserProfile(userId, userMessage);
+
+        // 3. メニュー系分岐
         const menuIntent = detectMenuIntent(userMessage);
 
         if (menuIntent === "show_menu") {
@@ -402,10 +588,10 @@ app.post("/webhook", async (req, res) => {
           continue;
         }
 
-        // 3. 通常会話はOpenAIへ
+        // 4. 通常会話
         const assistantReply = await askOpenAI(userId, userMessage);
 
-        // 4. 必要ならメニューを追加
+        // 5. 必要ならメニュー追加
         let finalReply = assistantReply;
         const finishedTopic = detectFinishedTopic(userMessage);
 
@@ -415,10 +601,10 @@ app.post("/webhook", async (req, res) => {
           finalReply += `\n\n---\n${getMainMenuText()}`;
         }
 
-        // 5. AI返答を保存
+        // 6. AI返答保存
         await saveMessage(userId, "assistant", finalReply);
 
-        // 6. LINE返信
+        // 7. LINE返信
         await replyToLine(replyToken, finalReply);
       } catch (eventError) {
         console.error("Event handling error:", eventError);
