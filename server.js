@@ -380,6 +380,7 @@ function buildJobSuggestionInstruction() {
 - minimum_salary がある場合は年収条件に反映する
 - office_attendance がある場合は、出社頻度に合う求人だけを前提にする
 - avoid_points_in_current_job がある場合は、その要素を避けた求人として書く
+- avoid_points_in_current_job がある場合は、懸念点だけでなく「おすすめ理由」「合う点」にも反映し、その環境を避けやすい理由を書く
 - profile にない条件を勝手に補わない
 - 3案の違いがはっきり分かるようにする
 - 必ずA/B/Cの順番で出す
