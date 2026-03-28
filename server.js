@@ -134,7 +134,10 @@ function getMainMenuText() {
 やりたいものをそのまま送ってください。
 例：自己分析、求人提案、面接対策、模擬面接
 例：模擬面接 営業企画 厳しめ
-例：模擬面接 RA 厳しめ`;
+例：模擬面接 RA 厳しめ
+例：前回の模擬面接
+例：前回の改善点
+例：前回との比較`;
 }
 
 function getNextActionMenuByTopic(topic = "") {
@@ -200,6 +203,9 @@ function getNextActionMenuByTopic(topic = "") {
 ③ 職務経歴書完成版
 ④ 求人提案
 ⑤ キャリア相談
+⑥ 前回の模擬面接
+⑦ 前回の改善点
+⑧ 前回との比較
 
 やりたいものをそのまま送ってください。`;
 
@@ -272,7 +278,20 @@ function detectMenuIntent(text = "") {
 
 function detectMockInterviewCommand(text = "") {
   const t = (text || "").trim().toLowerCase();
-  return t.includes("模擬面接") || t.includes("mock interview") || t.includes("mock_interview");
+  return (
+    t.includes("模擬面接") ||
+    t.includes("mock interview") ||
+    t.includes("mock_interview")
+  );
+}
+
+function detectMockInterviewReviewCommand(text = "") {
+  const t = (text || "").trim();
+  return (
+    t.includes("前回の模擬面接") ||
+    t.includes("前回の改善点") ||
+    t.includes("前回との比較")
+  );
 }
 
 function shouldUseStarterReply(userMessage = "", menuIntent = null) {
@@ -581,6 +600,7 @@ function normalizeInterviewState(interviewState = {}) {
     feedbacks: Array.isArray(interviewState.feedbacks)
       ? interviewState.feedbacks
       : [],
+    finalReview: interviewState.finalReview || "",
     isFinished: Boolean(interviewState.isFinished),
 
     ...interviewState,
@@ -808,6 +828,7 @@ function getDefaultMockInterviewState(type = "common", strictness = "normal") {
     questionIndex: 0,
     answers: [],
     feedbacks: [],
+    finalReview: "",
     isFinished: false,
   };
 }
@@ -1068,6 +1089,166 @@ ${formatted}
   }
 }
 
+async function handleMockInterviewReview(userId, replyToken, userMessage) {
+  try {
+    const session = await getSession(userId);
+    const state = normalizeInterviewState(session?.interview_state || {});
+
+    if (!state.answers || state.answers.length === 0) {
+      await replyToLine(
+        replyToken,
+        "前回の模擬面接データが見つかりませんでした。まずは模擬面接を実施してください。"
+      );
+      return;
+    }
+
+    if (userMessage.includes("前回の模擬面接")) {
+      const startIndex = Math.max(0, state.answers.length - 3);
+      const recentAnswers = state.answers
+        .slice(-3)
+        .map((item, index) => {
+          return `【質問${startIndex + index + 1}】
+${item.question}
+
+【あなたの回答】
+${item.answer}`;
+        })
+        .join("\n\n--------------------\n\n");
+
+      const finalReview = state.finalReview
+        ? `\n\n====================\n【前回の総評】\n${state.finalReview}`
+        : "";
+
+      const reply = `前回の模擬面接を振り返ります。
+
+${recentAnswers}${finalReview}`;
+
+      await saveMessage(userId, "assistant", reply);
+      await replyToLine(replyToken, reply);
+      return;
+    }
+
+    if (userMessage.includes("前回の改善点")) {
+      const finalReview = state.finalReview || "";
+
+      if (!finalReview) {
+        const reply =
+          "前回の改善点が見つかりませんでした。模擬面接を最後まで実施してください。";
+        await saveMessage(userId, "assistant", reply);
+        await replyToLine(replyToken, reply);
+        return;
+      }
+
+      const prompt = `
+以下は前回の模擬面接の総評です。
+
+${finalReview}
+
+この内容から、
+- 最も改善すべきポイント3つ
+- 具体的にどう直せばいいか
+- 次回の面接で意識する一言
+
+を簡潔にまとめてください。
+`;
+
+      const completion = await openai.chat.completions.create({
+        model: OPENAI_MODEL,
+        messages: [
+          {
+            role: "system",
+            content:
+              "あなたは一流の面接コーチです。簡潔かつ実践的に改善点を整理してください。",
+          },
+          {
+            role: "user",
+            content: prompt,
+          },
+        ],
+      });
+
+      const result =
+        completion.choices?.[0]?.message?.content?.trim() ||
+        "改善点を取得できませんでした。";
+
+      const reply = `【前回の改善点】
+${result}`;
+
+      await saveMessage(userId, "assistant", reply);
+      await replyToLine(replyToken, reply);
+      return;
+    }
+
+    if (userMessage.includes("前回との比較")) {
+      if (!state.answers || state.answers.length < 2) {
+        const reply =
+          "比較できる十分な模擬面接データがありません。複数回答後にお試しください。";
+        await saveMessage(userId, "assistant", reply);
+        await replyToLine(replyToken, reply);
+        return;
+      }
+
+      const prompt = `
+以下は模擬面接の最近の回答です。
+
+${state.answers
+  .slice(-2)
+  .map(
+    (item, index) =>
+      `【回答${index + 1}】
+質問: ${item.question}
+回答: ${item.answer}`
+  )
+  .join("\n\n")}
+
+この2つを比較し、
+- 良くなった点
+- まだ弱い点
+- 次回さらに改善するポイント
+
+を簡潔にまとめてください。
+`;
+
+      const completion = await openai.chat.completions.create({
+        model: OPENAI_MODEL,
+        messages: [
+          {
+            role: "system",
+            content:
+              "あなたは一流の面接コーチです。成長と改善点を具体的に比較してください。",
+          },
+          {
+            role: "user",
+            content: prompt,
+          },
+        ],
+      });
+
+      const result =
+        completion.choices?.[0]?.message?.content?.trim() ||
+        "比較結果を取得できませんでした。";
+
+      const reply = `【前回との比較】
+${result}`;
+
+      await saveMessage(userId, "assistant", reply);
+      await replyToLine(replyToken, reply);
+      return;
+    }
+
+    const fallback =
+      "前回の模擬面接 / 前回の改善点 / 前回との比較 のいずれかを送ってください。";
+    await saveMessage(userId, "assistant", fallback);
+    await replyToLine(replyToken, fallback);
+  } catch (error) {
+    console.error("handleMockInterviewReview error:", error);
+
+    const reply = "前回の模擬面接データの取得中にエラーが発生しました。";
+    await saveMessage(userId, "assistant", reply);
+    await replyToLine(replyToken, reply);
+  }
+}
+
 async function handleMockInterviewAnswer(
   userId,
   replyToken,
@@ -1145,6 +1326,8 @@ ${getNextActionMenuByTopic("mock_interview")}`;
       profile,
       summary
     );
+
+    finalState.finalReview = finalReview;
 
     await upsertSession(userId, {
       current_topic: null,
@@ -2242,6 +2425,12 @@ app.post("/webhook", async (req, res) => {
           const reply = getMainMenuText();
           await saveMessage(userId, "assistant", reply);
           await replyToLine(replyToken, reply);
+          continue;
+        }
+
+        // ===== 前回の模擬面接 振り返り =====
+        if (detectMockInterviewReviewCommand(userMessage)) {
+          await handleMockInterviewReview(userId, replyToken, userMessage);
           continue;
         }
 
