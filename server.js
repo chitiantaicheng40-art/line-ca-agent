@@ -449,6 +449,18 @@ function normalizeProfile(profile = {}) {
   };
 }
 
+function normalizeInterviewState(interviewState = {}) {
+  return {
+    pending_preference_questions: Array.isArray(
+      interviewState.pending_preference_questions
+    )
+      ? interviewState.pending_preference_questions
+      : [],
+    last_asked_preference: interviewState.last_asked_preference || null,
+    ...interviewState,
+  };
+}
+
 function isFieldFilled(value) {
   if (Array.isArray(value)) {
     return value.map((v) => String(v || "").trim()).filter(Boolean).length > 0;
@@ -463,15 +475,45 @@ function getMissingPreferenceFields(profile = {}) {
   );
 }
 
-function buildMissingQuestionsMessage(profile = {}) {
+function getNextMissingPreferenceQuestion(profile = {}) {
   const missing = getMissingPreferenceFields(profile);
-  if (missing.length === 0) return "";
+  if (missing.length === 0) return null;
 
-  const lines = missing.map((item, index) => `${index + 1}. ${item.question}`);
+  return {
+    key: missing[0].key,
+    label: missing[0].label,
+    question: missing[0].question,
+    remainingKeys: missing.map((item) => item.key),
+  };
+}
 
-  return `\n\n---\nよりマッチ度の高い求人に絞るため、差し支えない範囲で以下だけ教えてください。\n${lines.join(
-    "\n"
-  )}\n回答できるものだけで大丈夫です。`;
+function buildSingleMissingQuestionMessage(profile = {}) {
+  const next = getNextMissingPreferenceQuestion(profile);
+  if (!next) return "";
+
+  return `\n\n---\nよりマッチ度の高い求人に絞るため、まずは1点だけ教えてください。\n${next.question}\n回答できる範囲で大丈夫です。`;
+}
+
+function isLikelySimplePreferenceAnswer(userMessage = "") {
+  const t = (userMessage || "").trim();
+  if (!t) return false;
+  if (detectMenuIntent(t)) return false;
+  if (isJobSuggestionContext(t)) return false;
+
+  const longQuestionHints = [
+    "どう思う",
+    "相談",
+    "提案",
+    "面接",
+    "職務経歴書",
+    "自己分析",
+    "キャリア",
+  ];
+
+  if (longQuestionHints.some((w) => t.includes(w))) return false;
+  if (t.length > 100) return false;
+
+  return true;
 }
 
 function shouldAskMissingPreferences(aiReply = "") {
@@ -547,6 +589,7 @@ async function getSession(userId) {
   return {
     ...data,
     profile: normalizeProfile(data.profile || {}),
+    interview_state: normalizeInterviewState(data.interview_state || {}),
   };
 }
 
@@ -562,7 +605,10 @@ async function upsertSession(userId, patch = {}) {
     user_id: userId,
     profile: mergedProfile,
     summary: patch.summary ?? existing?.summary ?? null,
-    interview_state: patch.interview_state ?? existing?.interview_state ?? null,
+    interview_state:
+      patch.interview_state !== undefined
+        ? patch.interview_state
+        : existing?.interview_state ?? null,
     plan_type: patch.plan_type ?? existing?.plan_type ?? "free",
     usage_count:
       typeof patch.usage_count === "number"
@@ -585,6 +631,7 @@ async function upsertSession(userId, patch = {}) {
   return {
     ...data,
     profile: normalizeProfile(data.profile || {}),
+    interview_state: normalizeInterviewState(data.interview_state || {}),
   };
 }
 
@@ -922,6 +969,7 @@ async function updateUserProfile(userId, userMessage) {
   return updatedSession || {
     profile: mergedProfile,
     summary: nextSummary || existingSummary || "",
+    interview_state: existing?.interview_state || {},
   };
 }
 
@@ -1054,6 +1102,8 @@ app.post("/webhook", async (req, res) => {
 
         console.log("User message:", userMessage);
 
+        const sessionBefore = await getSession(userId);
+
         await saveMessage(userId, "user", userMessage);
         const updatedSession = await updateUserProfile(userId, userMessage);
 
@@ -1080,17 +1130,74 @@ app.post("/webhook", async (req, res) => {
           continue;
         }
 
+        const beforeInterviewState = normalizeInterviewState(
+          sessionBefore?.interview_state || {}
+        );
+        const waitingPreferenceKey = beforeInterviewState.last_asked_preference;
+        const updatedProfile = normalizeProfile(updatedSession?.profile || {});
+
+        if (
+          waitingPreferenceKey &&
+          isFieldFilled(updatedProfile[waitingPreferenceKey]) &&
+          isLikelySimplePreferenceAnswer(userMessage)
+        ) {
+          const nextQuestion = getNextMissingPreferenceQuestion(updatedProfile);
+
+          if (nextQuestion) {
+            const reply = `ありがとうございます。\n\n次に、もう1点だけ教えてください。\n${nextQuestion.question}\n回答できる範囲で大丈夫です。`;
+
+            await upsertSession(userId, {
+              interview_state: {
+                pending_preference_questions: nextQuestion.remainingKeys,
+                last_asked_preference: nextQuestion.key,
+              },
+            });
+
+            await saveMessage(userId, "assistant", reply);
+            await replyToLine(replyToken, reply);
+            continue;
+          } else {
+            const reply =
+              "ありがとうございます。希望条件の確認がそろいました。\nこの条件を前提に、より精度高く求人提案できます。続けて求人提案したい場合は、そのまま「求人提案して」と送ってください。";
+
+            await upsertSession(userId, {
+              interview_state: {
+                pending_preference_questions: [],
+                last_asked_preference: null,
+              },
+            });
+
+            await saveMessage(userId, "assistant", reply);
+            await replyToLine(replyToken, reply);
+            continue;
+          }
+        }
+
         const assistantReply = await askOpenAI(userId, userMessage);
 
         let finalReply = assistantReply;
         const finishedTopic = detectFinishedTopic(userMessage);
 
         if (shouldAskMissingPreferences(assistantReply)) {
-          const missingQuestions = buildMissingQuestionsMessage(
-            updatedSession?.profile || {}
-          );
-          if (missingQuestions) {
-            finalReply += missingQuestions;
+          const singleQuestion = buildSingleMissingQuestionMessage(updatedProfile);
+          const nextQuestion = getNextMissingPreferenceQuestion(updatedProfile);
+
+          if (singleQuestion && nextQuestion) {
+            finalReply += singleQuestion;
+
+            await upsertSession(userId, {
+              interview_state: {
+                pending_preference_questions: nextQuestion.remainingKeys,
+                last_asked_preference: nextQuestion.key,
+              },
+            });
+          } else {
+            await upsertSession(userId, {
+              interview_state: {
+                pending_preference_questions: [],
+                last_asked_preference: null,
+              },
+            });
           }
         }
 
