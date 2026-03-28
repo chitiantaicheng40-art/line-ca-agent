@@ -1318,23 +1318,26 @@ async function askOpenAI(userId, userMessage, forcedTopic = null, overrideInstru
     const summary = session?.summary || "";
     const currentTopic = forcedTopic || session?.current_topic || null;
 
-    const isJobSuggestionMode =
-      isJobSuggestionContext(userMessage) || currentTopic === "job_suggestion";
+   const isJobSuggestionMode =
+  isJobSuggestionContext(userMessage) || currentTopic === "job_suggestion";
 
-    const isResumeMode = currentTopic === "resume";
+const isResumeMode = currentTopic === "resume";
+const isInterviewMode = currentTopic === "interview";
 
-    const isFollowup =
-      currentTopic === "job_suggestion" && isFollowupRequest(userMessage);
+const isFollowup =
+  currentTopic === "job_suggestion" && isFollowupRequest(userMessage);
 
-    const extraInstructions =
-      overrideInstruction ||
-      (isJobSuggestionMode && isFollowup
-        ? buildJobSuggestionFollowupInstruction(profile, "A")
-        : isJobSuggestionMode
-        ? buildJobSuggestionInstruction(profile)
-        : isResumeMode
-        ? buildResumeInstruction(profile, summary)
-        : "");
+const extraInstructions =
+  overrideInstruction ||
+  (isJobSuggestionMode && isFollowup
+    ? buildJobSuggestionFollowupInstruction(profile, "A")
+    : isJobSuggestionMode
+    ? buildJobSuggestionInstruction(profile)
+    : isResumeMode
+    ? buildResumeInstruction(profile, summary)
+    : isInterviewMode
+    ? buildInterviewInstruction(profile, summary)
+    : "");
 
     const messages = [
       {
