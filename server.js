@@ -269,6 +269,59 @@ function shouldAppendMenu(userText = "", aiText = "") {
   return false;
 }
 
+// ===== Topic State =====
+function isShortContinuationMessage(text = "") {
+  const t = (text || "").trim();
+  if (!t) return false;
+
+  const continuationPhrases = [
+    "お願いします",
+    "お願い",
+    "次",
+    "次いこう",
+    "次行こう",
+    "次いきましょう",
+    "次行きましょう",
+    "続けて",
+    "続き",
+    "それで",
+    "それやろう",
+    "それやりましょう",
+    "やる",
+    "進める",
+    "進めましょう",
+    "もっと",
+    "詳しく",
+    "具体的に",
+    "お願いします！",
+    "お願いいたします",
+  ];
+
+  if (continuationPhrases.includes(t)) return true;
+  if (t.length <= 12 && continuationPhrases.some((p) => t.includes(p))) return true;
+
+  return false;
+}
+
+function resolveCurrentTopic(userMessage = "", sessionCurrentTopic = null) {
+  const explicitIntent = detectMenuIntent(userMessage);
+
+  if (
+    explicitIntent &&
+    ["self_analysis", "job_suggestion", "resume", "interview", "career"].includes(
+      explicitIntent
+    )
+  ) {
+    return explicitIntent;
+  }
+
+  if (isShortContinuationMessage(userMessage) && sessionCurrentTopic) {
+    return sessionCurrentTopic;
+  }
+
+  return sessionCurrentTopic || null;
+}
+
 // ===== Job Suggestion Formatting =====
 function isJobSuggestionContext(text = "") {
   const t = (text || "").trim();
@@ -302,6 +355,12 @@ function buildConditionStatusInstruction(profile = {}) {
 重要ルール:
 - 取得済みの項目は【次に確認したいこと】に絶対に書かない
 - 未取得項目がない場合は【次に確認したいこと】自体を書かない
+- 以下の項目は【次に確認したいこと】として勝手に追加しない
+  - どのくらい企画寄りに行きたいか
+  - マネジメントか専門性か
+  - 理想年収
+  - 業界追加希望
+  - リモート条件の再確認
 `;
 }
 
@@ -317,7 +376,8 @@ function buildJobSuggestionInstruction(profile = {}) {
 - 各案に必ず「応募優先度：高 / 中 / 低」をつける
 - 一致度は、業界・年収・勤務地・出社頻度・避けたいこと・経験との整合を踏まえて相対評価する
 - 応募優先度は、一致度だけでなく、選考通過しやすさ・再現性・未経験要素の少なさも踏まえてつける
-- 一致度と応募優先度は適当につけず、理由と整合するようにする
+- 一致度と応募優先度は絶対に省略しない
+- A/B/Cの全案で必ず同じ形式を守る
 
 出力フォーマット：
 【A. 安定寄り】一致度：xx% / 応募優先度：高・中・低
@@ -369,7 +429,7 @@ A → B → C
   - 出社頻度との整合
   - 希望勤務地との整合
   - 避けたい環境との相性
-- すべて無理に書かなくてよいが、relevant なものは優先して書く
+- すべて無理に書かなくてよいが relevant なものは優先して書く
 - 例：
   ・業界希望のSaaS / 人材と親和性が高い
   ・年収700万以上を狙いやすいレンジ
@@ -404,6 +464,8 @@ A → B → C
 - 各案の職種例は、可能なら業界名も入れる（例：SaaS企業の営業企画 / 人材会社の事業企画）
 - 取得済み条件は【次に確認したいこと】に書かない
 - 未取得項目がない場合は【次に確認したいこと】を出さない
+- 「一致度」「応募優先度」が1つでも欠けたら不正な出力
+- 省略表現を使わず、A/B/Cすべてに完全な項目を入れる
 
 ${buildConditionStatusInstruction(profile)}
 `;
@@ -535,7 +597,7 @@ function isLikelySimplePreferenceAnswer(userMessage = "") {
   return true;
 }
 
-function shouldAskMissingPreferences(aiReply = "") {
+function shouldAskMissingPreferences(aiReply = "", currentTopic = "") {
   const text = String(aiReply || "");
 
   const proposalHints = [
@@ -549,8 +611,11 @@ function shouldAskMissingPreferences(aiReply = "") {
     "バランス寄り",
     "ポジション",
     "ご提案",
+    "一致度",
+    "応募優先度",
   ];
 
+  if (currentTopic === "job_suggestion") return true;
   return proposalHints.some((word) => text.includes(word));
 }
 
@@ -609,6 +674,7 @@ async function getSession(userId) {
     ...data,
     profile: normalizeProfile(data.profile || {}),
     interview_state: normalizeInterviewState(data.interview_state || {}),
+    current_topic: data.current_topic || null,
   };
 }
 
@@ -628,6 +694,10 @@ async function upsertSession(userId, patch = {}) {
       patch.interview_state !== undefined
         ? patch.interview_state
         : existing?.interview_state ?? null,
+    current_topic:
+      patch.current_topic !== undefined
+        ? patch.current_topic
+        : existing?.current_topic ?? null,
     plan_type: patch.plan_type ?? existing?.plan_type ?? "free",
     usage_count:
       typeof patch.usage_count === "number"
@@ -651,6 +721,7 @@ async function upsertSession(userId, patch = {}) {
     ...data,
     profile: normalizeProfile(data.profile || {}),
     interview_state: normalizeInterviewState(data.interview_state || {}),
+    current_topic: data.current_topic || null,
   };
 }
 
@@ -989,6 +1060,7 @@ async function updateUserProfile(userId, userMessage) {
     profile: mergedProfile,
     summary: nextSummary || existingSummary || "",
     interview_state: existing?.interview_state || {},
+    current_topic: existing?.current_topic || null,
   };
 }
 
@@ -1017,14 +1089,18 @@ const SYSTEM_PROMPT = `
 `;
 
 // ===== OpenAI Ask =====
-async function askOpenAI(userId, userMessage) {
+async function askOpenAI(userId, userMessage, forcedTopic = null) {
   try {
     const history = await getRecentMessages(userId, 12);
     const session = await getSession(userId);
     const profile = normalizeProfile(session?.profile || {});
     const summary = session?.summary || "";
+    const currentTopic = forcedTopic || session?.current_topic || null;
 
-    const extraInstructions = isJobSuggestionContext(userMessage)
+    const isJobSuggestionMode =
+      isJobSuggestionContext(userMessage) || currentTopic === "job_suggestion";
+
+    const extraInstructions = isJobSuggestionMode
       ? buildJobSuggestionInstruction(profile)
       : "";
 
@@ -1058,6 +1134,14 @@ ${JSON.stringify(profile, null, 2)}
           "このユーザーの現在summaryです。自然に参考にしてください。古そう・不確実そうなら確認しながら使ってください。\n" +
           summary,
       },
+      ...(currentTopic
+        ? [
+            {
+              role: "system",
+              content: `現在の会話テーマは「${currentTopic}」です。短い継続メッセージ（例: お願いします、次、続けて）はこのテーマの続きとして扱ってください。`,
+            },
+          ]
+        : []),
       ...(extraInstructions
         ? [{ role: "system", content: extraInstructions }]
         : []),
@@ -1085,7 +1169,7 @@ async function generateAutoRefinedJobSuggestion(userId) {
   const autoPrompt =
     "保存済みの条件がそろったので、現在のプロフィールを前提に改めて求人提案してください。A/B/Cの3パターンで、より条件に沿って具体的に提案してください。未取得項目がなければ【次に確認したいこと】は出さないでください。各案に一致度と応募優先度を必ずつけてください。";
 
-  return await askOpenAI(userId, autoPrompt);
+  return await askOpenAI(userId, autoPrompt, "job_suggestion");
 }
 
 // ===== Topic Starter Replies =====
@@ -1129,6 +1213,14 @@ app.post("/webhook", async (req, res) => {
         console.log("User message:", userMessage);
 
         const sessionBefore = await getSession(userId);
+        const resolvedTopic = resolveCurrentTopic(
+          userMessage,
+          sessionBefore?.current_topic || null
+        );
+
+        if (resolvedTopic !== (sessionBefore?.current_topic || null)) {
+          await upsertSession(userId, { current_topic: resolvedTopic });
+        }
 
         await saveMessage(userId, "user", userMessage);
         const updatedSession = await updateUserProfile(userId, userMessage);
@@ -1150,6 +1242,8 @@ app.post("/webhook", async (req, res) => {
             menuIntent === "career") &&
           shouldUseStarterReply(userMessage, menuIntent)
         ) {
+          await upsertSession(userId, { current_topic: menuIntent });
+
           const reply = getStarterReplyByIntent(menuIntent);
           await saveMessage(userId, "assistant", reply);
           await replyToLine(replyToken, reply);
@@ -1161,8 +1255,10 @@ app.post("/webhook", async (req, res) => {
         );
         const waitingPreferenceKey = beforeInterviewState.last_asked_preference;
         const updatedProfile = normalizeProfile(updatedSession?.profile || {});
+        const activeTopic = resolvedTopic || updatedSession?.current_topic || null;
 
         if (
+          activeTopic === "job_suggestion" &&
           waitingPreferenceKey &&
           isFieldFilled(updatedProfile[waitingPreferenceKey]) &&
           isLikelySimplePreferenceAnswer(userMessage)
@@ -1173,6 +1269,7 @@ app.post("/webhook", async (req, res) => {
             const reply = `ありがとうございます。\n\n次に、もう1点だけ教えてください。\n${nextQuestion.question}\n回答できる範囲で大丈夫です。`;
 
             await upsertSession(userId, {
+              current_topic: "job_suggestion",
               interview_state: {
                 pending_preference_questions: nextQuestion.remainingKeys,
                 last_asked_preference: nextQuestion.key,
@@ -1184,6 +1281,7 @@ app.post("/webhook", async (req, res) => {
             continue;
           } else {
             await upsertSession(userId, {
+              current_topic: "job_suggestion",
               interview_state: {
                 pending_preference_questions: [],
                 last_asked_preference: null,
@@ -1201,12 +1299,12 @@ app.post("/webhook", async (req, res) => {
           }
         }
 
-        const assistantReply = await askOpenAI(userId, userMessage);
+        const assistantReply = await askOpenAI(userId, userMessage, activeTopic);
 
         let finalReply = assistantReply;
         const finishedTopic = detectFinishedTopic(userMessage);
 
-        if (shouldAskMissingPreferences(assistantReply)) {
+        if (activeTopic === "job_suggestion" || shouldAskMissingPreferences(assistantReply, activeTopic)) {
           const singleQuestion = buildSingleMissingQuestionMessage(updatedProfile);
           const nextQuestion = getNextMissingPreferenceQuestion(updatedProfile);
 
@@ -1214,13 +1312,15 @@ app.post("/webhook", async (req, res) => {
             finalReply += singleQuestion;
 
             await upsertSession(userId, {
+              current_topic: "job_suggestion",
               interview_state: {
                 pending_preference_questions: nextQuestion.remainingKeys,
                 last_asked_preference: nextQuestion.key,
               },
             });
-          } else {
+          } else if (activeTopic === "job_suggestion") {
             await upsertSession(userId, {
+              current_topic: "job_suggestion",
               interview_state: {
                 pending_preference_questions: [],
                 last_asked_preference: null,
@@ -1230,7 +1330,9 @@ app.post("/webhook", async (req, res) => {
         }
 
         const shouldSkipTopicMenu =
-          isJobSuggestionContext(userMessage) || shouldAskMissingPreferences(assistantReply);
+          activeTopic === "job_suggestion" ||
+          isJobSuggestionContext(userMessage) ||
+          shouldAskMissingPreferences(assistantReply, activeTopic);
 
         if (!shouldSkipTopicMenu && finishedTopic) {
           finalReply += `\n\n---\n${getNextActionMenuByTopic(finishedTopic)}`;
