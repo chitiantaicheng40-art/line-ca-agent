@@ -369,6 +369,10 @@ function buildJobSuggestionInstruction(profile = {}) {
 今回は「求人提案」として回答してください。
 
 出力ルール：
+- 冒頭に一文だけ自然な導入文を入れてよい
+- 導入文の例：
+  「ありがとうございます！あなたの希望条件に基づいて、以下の求人提案を考えてみました。」
+- ただし謝罪文・言い訳・「再度」「失礼しました」などの表現は禁止
 - LINEで読みやすい見出し付き
 - 必ず3パターンで提案する
 - 順番は以下で固定
@@ -380,6 +384,8 @@ function buildJobSuggestionInstruction(profile = {}) {
 - A/B/Cの全案で必ず同じ形式を守る
 
 出力フォーマット：
+ありがとうございます！あなたの希望条件に基づいて、以下の求人提案を考えてみました。
+
 【A. 安定寄り】一致度：xx% / 応募優先度：高・中・低
 職種例：
 - ・・・
@@ -413,7 +419,6 @@ function buildJobSuggestionInstruction(profile = {}) {
 - 応募優先度の理由
 - 懸念点
 
-最後に必ず
 【おすすめ応募順】
 A → B → C
 のように、最もおすすめの順で並べる
@@ -452,6 +457,8 @@ A → B → C
 - avoid_points_in_current_job がある場合は、その要素を避けた求人として書く
 - avoid_points_in_current_job がある場合は、懸念点だけでなく「おすすめ理由」「合う点」「一致理由」にも反映し、その環境を避けやすい理由を書く
 - profile にない条件を勝手に補わない
+- ユーザーが明示していない経験は断定しない
+- 「〜経験を活かせる」と言い切れない場合は、「〜志向と親和性が高い」「〜に挑戦しやすい」と表現する
 - 3案の違いがはっきり分かるようにする
 - 必ずA/B/Cの順番で出す
 - 1案あたり長くしすぎない
@@ -476,8 +483,49 @@ function isValidJobSuggestionFormat(text = "") {
     s.includes("応募優先度：") &&
     s.includes("一致理由") &&
     s.includes("応募優先度の理由") &&
+    s.includes("懸念点") &&
     s.includes("【おすすめ応募順】")
   );
+}
+
+function cleanJobSuggestionLead(text = "") {
+  let s = String(text || "").trim();
+
+  const unwantedLeads = [
+    /^失礼いたしました！?\s*/u,
+    /^申し訳ありませんが、?\s*/u,
+    /^以下の形式で再度求人提案をさせていただきます。?\s*/u,
+    /^再度求人提案します。?\s*/u,
+    /^改めて求人提案します。?\s*/u,
+    /^それでは、?再度ご提案します。?\s*/u,
+  ];
+
+  for (const pattern of unwantedLeads) {
+    s = s.replace(pattern, "").trim();
+  }
+
+  const allowedLead =
+    "ありがとうございます！あなたの希望条件に基づいて、以下の求人提案を考えてみました。";
+
+  const startIndex = s.indexOf("【A. 安定寄り】");
+
+  if (startIndex >= 0) {
+    const beforeA = s.slice(0, startIndex).trim();
+
+    if (!beforeA) {
+      return `${allowedLead}\n\n${s.slice(startIndex).trim()}`;
+    }
+
+    if (
+      beforeA.includes("ありがとうございます！あなたの希望条件に基づいて、以下の求人提案を考えてみました。")
+    ) {
+      return `${allowedLead}\n\n${s.slice(startIndex).trim()}`;
+    }
+
+    return `${allowedLead}\n\n${s.slice(startIndex).trim()}`;
+  }
+
+  return s;
 }
 
 // ===== Preference Missing-Field Logic =====
@@ -1182,7 +1230,7 @@ ${JSON.stringify(profile, null, 2)}
         {
           role: "user",
           content:
-            "出力形式が不足しています。必ずA/B/Cの3案すべてに「一致度」「応募優先度」「一致理由」「応募優先度の理由」を入れ、最後に【おすすめ応募順】を付けて完全な形式で再出力してください。",
+            "出力形式が不足しています。謝罪文・言い訳・「再度」などの前置きは書かず、自然な導入文は「ありがとうございます！あなたの希望条件に基づいて、以下の求人提案を考えてみました。」のみ許可します。必ずA/B/Cの3案すべてに「一致度」「応募優先度」「一致理由」「応募優先度の理由」「懸念点」を入れ、最後に【おすすめ応募順】を付けて完全な形式で再出力してください。",
         },
       ];
 
@@ -1199,6 +1247,10 @@ ${JSON.stringify(profile, null, 2)}
       if (isValidJobSuggestionFormat(retried)) {
         reply = retried;
       }
+    }
+
+    if (isJobSuggestionMode) {
+      reply = cleanJobSuggestionLead(reply);
     }
 
     return reply;
