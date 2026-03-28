@@ -185,7 +185,10 @@ function getMainMenuText() {
 例：模擬面接 SaaS 営業企画 厳しめ
 例：前回の模擬面接
 例：前回の改善点
-例：前回との比較`;
+例：前回との比較
+例：この回答を添削して
+例：厳しめで添削
+例：通過率が上がる言い方にして`;
 }
 
 function getNextActionMenuByTopic(topic = "") {
@@ -239,6 +242,7 @@ function getNextActionMenuByTopic(topic = "") {
 ③ 職務経歴書完成版
 ④ キャリア相談
 ⑤ 模擬面接モード
+⑥ 回答添削
 
 やりたいものをそのまま送ってください。`;
 
@@ -254,6 +258,7 @@ function getNextActionMenuByTopic(topic = "") {
 ⑥ 前回の模擬面接
 ⑦ 前回の改善点
 ⑧ 前回との比較
+⑨ 回答添削
 
 やりたいものをそのまま送ってください。`;
 
@@ -265,6 +270,7 @@ function getNextActionMenuByTopic(topic = "") {
 ④ 職務経歴書完成版
 ⑤ 面接対策
 ⑥ 模擬面接モード
+⑦ 回答添削
 
 やりたいものをそのまま送ってください。`;
 
@@ -339,6 +345,19 @@ function detectMockInterviewReviewCommand(text = "") {
     t.includes("前回の模擬面接") ||
     t.includes("前回の改善点") ||
     t.includes("前回との比較")
+  );
+}
+
+function detectAnswerPolishCommand(text = "") {
+  const t = (text || "").trim();
+
+  return (
+    t.includes("この回答を添削") ||
+    t.includes("添削して") ||
+    t.includes("厳しめで添削") ||
+    t.includes("通過率が上がる言い方") ||
+    t.includes("面接向けに直して") ||
+    t.includes("面接用に直して")
   );
 }
 
@@ -1335,6 +1354,112 @@ ${result}`;
   }
 }
 
+async function handleAnswerPolish(userId, replyToken, userMessage) {
+  try {
+    const history = await getRecentMessages(userId, 12);
+    const session = await getSession(userId);
+    const profile = normalizeProfile(session?.profile || {});
+    const summary = session?.summary || "";
+
+    const recentUserMessages = history
+      .filter((m) => m.role === "user")
+      .map((m) => m.content)
+      .filter(Boolean);
+
+    let targetAnswer = "";
+    for (let i = recentUserMessages.length - 1; i >= 0; i--) {
+      const msg = recentUserMessages[i];
+      if (!detectAnswerPolishCommand(msg)) {
+        targetAnswer = msg;
+        break;
+      }
+    }
+
+    if (!targetAnswer) {
+      const reply =
+        "添削対象の回答が見つかりませんでした。先に回答文を送ったあとで「この回答を添削して」と送ってください。";
+      await saveMessage(userId, "assistant", reply);
+      await replyToLine(replyToken, reply);
+      return;
+    }
+
+    let toneInstruction = "実務的かつバランス良く添削してください。";
+    if (userMessage.includes("厳しめ")) {
+      toneInstruction =
+        "面接官視点で厳しめに添削し、弱い表現や抽象表現を明確に修正してください。";
+    } else if (
+      userMessage.includes("通過率が上がる") ||
+      userMessage.includes("面接向け") ||
+      userMessage.includes("面接用")
+    ) {
+      toneInstruction =
+        "面接通過率が上がるように、説得力・再現性・具体性を強めて添削してください。";
+    }
+
+    const prompt = `
+あなたは非常に優秀な面接コーチです。
+${toneInstruction}
+
+候補者プロフィール:
+${JSON.stringify(profile, null, 2)}
+
+候補者サマリー:
+${summary || "なし"}
+
+添削対象の回答:
+${targetAnswer}
+
+以下の形式で日本語で返してください。
+
+【元の回答の弱い点】
+- 2〜3点
+
+【改善のポイント】
+- 2〜3点
+
+【添削後の回答】
+- 面接でそのまま話せる自然な文章
+
+ルール:
+- 候補者が明示していない数値・成果・役職・KPIは創作しない
+- 抽象表現はなるべく具体化する
+- ただし事実にないことは足さない
+- 口頭で話しやすい長さにする
+`;
+
+    const completion = await openai.chat.completions.create({
+      model: OPENAI_MODEL,
+      messages: [
+        {
+          role: "system",
+          content:
+            "あなたは一流の面接コーチです。厳しくても建設的に回答添削を行ってください。",
+        },
+        {
+          role: "user",
+          content: prompt,
+        },
+      ],
+    });
+
+    const result =
+      completion.choices?.[0]?.message?.content?.trim() ||
+      "添削結果を生成できませんでした。";
+
+    const reply = `【回答添削】
+${result}`;
+
+    await saveMessage(userId, "assistant", reply);
+    await replyToLine(replyToken, reply);
+  } catch (error) {
+    console.error("handleAnswerPolish error:", error);
+
+    const reply = "回答添削中にエラーが発生しました。";
+    await saveMessage(userId, "assistant", reply);
+    await replyToLine(replyToken, reply);
+  }
+}
+
 async function handleMockInterviewAnswer(
   userId,
   replyToken,
@@ -2269,6 +2394,7 @@ const SYSTEM_PROMPT = `
 - 面接対策
 - キャリア相談
 - 模擬面接の前後フォロー
+- 回答添削
 
 共通ルール：
 - 会話の途中でテーマが変わっても自然に対応する
@@ -2520,6 +2646,12 @@ app.post("/webhook", async (req, res) => {
         // ===== 前回の模擬面接 振り返り =====
         if (detectMockInterviewReviewCommand(userMessage)) {
           await handleMockInterviewReview(userId, replyToken, userMessage);
+          continue;
+        }
+
+        // ===== 回答添削 =====
+        if (detectAnswerPolishCommand(userMessage)) {
+          await handleAnswerPolish(userId, replyToken, userMessage);
           continue;
         }
 
