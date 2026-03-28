@@ -7,6 +7,19 @@ const { createClient } = require("@supabase/supabase-js");
 
 const app = express();
 const PORT = process.env.PORT || 10000;
+const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
+
+// ===== Mock Interview =====
+const MOCK_INTERVIEW_QUESTIONS = [
+  "これまでのご経歴を1〜2分程度で簡単にお願いします。",
+  "なぜ転職を考えているのですか？",
+  "これまでの仕事で成果を出した経験を教えてください。",
+  "逆に、仕事で苦労したことや失敗したこと、それをどう乗り越えたか教えてください。",
+  "なぜこの職種・業界を志望しているのですか？",
+  "あなたの強みと弱みを教えてください。",
+  "入社後にどのような価値を出せると考えていますか？",
+  "最後に、何か質問はありますか？",
+];
 
 // ===== OpenAI =====
 const openai = new OpenAI({
@@ -82,9 +95,10 @@ function getMainMenuText() {
 ③ 職務経歴書・経験整理
 ④ 面接対策
 ⑤ キャリア相談
+⑥ 模擬面接モード
 
 やりたいものをそのまま送ってください。
-例：自己分析、求人提案、面接対策`;
+例：自己分析、求人提案、面接対策、模擬面接`;
 }
 
 function getNextActionMenuByTopic(topic = "") {
@@ -97,6 +111,7 @@ function getNextActionMenuByTopic(topic = "") {
 ② 職務経歴書・経験整理
 ③ 面接対策
 ④ キャリア相談
+⑤ 模擬面接モード
 
 やりたいものをそのまま送ってください。`;
 
@@ -107,6 +122,7 @@ function getNextActionMenuByTopic(topic = "") {
 ③ 職務経歴書完成版
 ④ 面接対策
 ⑤ キャリア相談
+⑥ 模擬面接モード
 
 やりたいものをそのまま送ってください。`;
 
@@ -116,6 +132,7 @@ function getNextActionMenuByTopic(topic = "") {
 ② 求人提案
 ③ 面接対策
 ④ キャリア相談
+⑤ 模擬面接モード
 
 やりたいものをそのまま送ってください。`;
 
@@ -124,6 +141,7 @@ function getNextActionMenuByTopic(topic = "") {
 ① 面接対策
 ② 求人提案
 ③ キャリア相談
+④ 模擬面接モード
 
 やりたいものをそのまま送ってください。`;
 
@@ -133,6 +151,19 @@ function getNextActionMenuByTopic(topic = "") {
 ② 職務経歴書・経験整理
 ③ 職務経歴書完成版
 ④ キャリア相談
+⑤ 模擬面接モード
+
+やりたいものをそのまま送ってください。`;
+
+    case "mock_interview":
+      return `模擬面接おつかれさまでした。
+
+次は、こちらも進められます👇
+① 面接対策
+② 職務経歴書・経験整理
+③ 職務経歴書完成版
+④ 求人提案
+⑤ キャリア相談
 
 やりたいものをそのまま送ってください。`;
 
@@ -143,6 +174,7 @@ function getNextActionMenuByTopic(topic = "") {
 ③ 職務経歴書・経験整理
 ④ 職務経歴書完成版
 ⑤ 面接対策
+⑥ 模擬面接モード
 
 やりたいものをそのまま送ってください。`;
 
@@ -197,8 +229,19 @@ function detectMenuIntent(text = "") {
 
   if (t === "4" || t === "面接対策") return "interview";
   if (t === "5" || t === "キャリア相談") return "career";
+  if (t === "6" || t === "模擬面接" || t === "模擬面接モード") return "mock_interview";
 
   return null;
+}
+
+function detectMockInterviewCommand(text = "") {
+  const t = (text || "").trim().toLowerCase();
+  return (
+    t === "模擬面接" ||
+    t === "模擬面接モード" ||
+    t === "mock interview" ||
+    t === "mock_interview"
+  );
 }
 
 function shouldUseStarterReply(userMessage = "", menuIntent = null) {
@@ -229,7 +272,8 @@ function shouldUseStarterReply(userMessage = "", menuIntent = null) {
     "SaaS",
     "人材",
     "メーカー",
-    "IT",
+    "企業",
+    "志望動機",
   ];
 
   if (t.length >= 20) return false;
@@ -252,6 +296,7 @@ function detectFinishedTopic(text = "") {
   ) {
     return "resume";
   }
+  if (t.includes("模擬面接")) return "mock_interview";
   if (t.includes("面接対策")) return "interview";
   if (t.includes("キャリア相談")) return "career";
 
@@ -330,6 +375,7 @@ function resolveCurrentTopic(userMessage = "", sessionCurrentTopic = null) {
       "resume_complete",
       "interview",
       "career",
+      "mock_interview",
     ].includes(explicitIntent)
   ) {
     return explicitIntent;
@@ -489,6 +535,19 @@ function normalizeInterviewState(interviewState = {}) {
     selectedPlan: ["A", "B", "C"].includes(interviewState.selectedPlan)
       ? interviewState.selectedPlan
       : null,
+
+    mode: interviewState.mode || null,
+    startedAt: interviewState.startedAt || null,
+    questionIndex:
+      typeof interviewState.questionIndex === "number"
+        ? interviewState.questionIndex
+        : 0,
+    answers: Array.isArray(interviewState.answers) ? interviewState.answers : [],
+    feedbacks: Array.isArray(interviewState.feedbacks)
+      ? interviewState.feedbacks
+      : [],
+    isFinished: Boolean(interviewState.isFinished),
+
     ...interviewState,
   };
 }
@@ -702,6 +761,297 @@ async function saveMessage(userId, role, content) {
   if (error) {
     console.error("Supabase saveMessage error:", error.message);
   }
+}
+
+// ===== Mock Interview Helpers =====
+function getDefaultMockInterviewState(baseState = {}) {
+  return {
+    ...normalizeInterviewState(baseState),
+    mode: "mock_interview",
+    startedAt: new Date().toISOString(),
+    questionIndex: 0,
+    answers: [],
+    feedbacks: [],
+    isFinished: false,
+  };
+}
+
+async function startMockInterview(userId, replyToken, sessionBefore = null) {
+  const currentState = normalizeInterviewState(sessionBefore?.interview_state || {});
+  const newState = getDefaultMockInterviewState(currentState);
+
+  await upsertSession(userId, {
+    current_topic: "mock_interview",
+    interview_state: newState,
+  });
+
+  const firstQuestion = MOCK_INTERVIEW_QUESTIONS[0];
+
+  const reply = `模擬面接モードを開始します。
+
+私が面接官として1問ずつ質問します。
+できるだけ本番のつもりで回答してください。
+途中でやめるときは「終了」と送ってください。
+
+【第1問】
+${firstQuestion}`;
+
+  await saveMessage(userId, "assistant", reply);
+  await replyToLine(replyToken, reply);
+}
+
+async function evaluateMockAnswer(question, answer, profile = {}, summary = "") {
+  try {
+    const prompt = `
+あなたは非常に優秀な採用面接官です。
+以下の質問と回答に対して、実務的に厳しめかつ建設的にフィードバックしてください。
+
+候補者プロフィール:
+${JSON.stringify(profile, null, 2)}
+
+候補者サマリー:
+${summary || "なし"}
+
+【質問】
+${question}
+
+【回答】
+${answer}
+
+以下の形式で日本語で返してください。
+
+【良い点】
+- 箇条書きで2〜3点
+
+【改善点】
+- 箇条書きで2〜3点
+
+【改善回答例】
+- 面接でそのまま使える自然な回答例を3〜6文程度
+
+ルール:
+- 簡潔で実践的に
+- 甘すぎる評価にしない
+- ただし否定的すぎず、改善可能な形で返す
+`;
+
+    const completion = await openai.chat.completions.create({
+      model: OPENAI_MODEL,
+      temperature: 0.4,
+      messages: [
+        {
+          role: "system",
+          content:
+            "あなたは一流企業の採用面接官です。評価は厳しめだが建設的です。",
+        },
+        {
+          role: "user",
+          content: prompt,
+        },
+      ],
+    });
+
+    return completion.choices?.[0]?.message?.content?.trim() || "フィードバックを生成できませんでした。";
+  } catch (error) {
+    console.error("evaluateMockAnswer error:", error.response?.data || error.message);
+    return "フィードバック生成中にエラーが発生しました。";
+  }
+}
+
+async function generateMockInterviewFinalReview(
+  answers = [],
+  profile = {},
+  summary = ""
+) {
+  try {
+    const formatted = answers
+      .map((item, i) => {
+        return `【Q${i + 1}】${item.question}\n【A${i + 1}】${item.answer}`;
+      })
+      .join("\n\n");
+
+    const prompt = `
+あなたは非常に優秀な採用面接官です。
+以下は模擬面接の回答一覧です。全体を見て総評してください。
+
+候補者プロフィール:
+${JSON.stringify(profile, null, 2)}
+
+候補者サマリー:
+${summary || "なし"}
+
+${formatted}
+
+以下の形式で日本語で返してください。
+
+【総評】
+- 全体の印象を3〜5文
+
+【評価】
+- 伝わりやすさ：
+- 論理性：
+- 熱意：
+- 再現性：
+- 面接通過可能性：
+
+【強み】
+- 箇条書きで3点
+
+【改善すべき点】
+- 箇条書きで3点
+
+【次回までに直すべきこと】
+- 優先順位つきで3点
+
+ルール:
+- 簡潔で実践的に
+- 厳しめだが建設的に
+- 数値の点数表記ではなく、文章評価でよい
+`;
+
+    const completion = await openai.chat.completions.create({
+      model: OPENAI_MODEL,
+      temperature: 0.4,
+      messages: [
+        {
+          role: "system",
+          content:
+            "あなたは一流企業の採用面接官です。実務的に厳しめに評価してください。",
+        },
+        {
+          role: "user",
+          content: prompt,
+        },
+      ],
+    });
+
+    return completion.choices?.[0]?.message?.content?.trim() || "総評を生成できませんでした。";
+  } catch (error) {
+    console.error(
+      "generateMockInterviewFinalReview error:",
+      error.response?.data || error.message
+    );
+    return "総評生成中にエラーが発生しました。";
+  }
+}
+
+async function handleMockInterviewAnswer(
+  userId,
+  replyToken,
+  session,
+  userMessage
+) {
+  const interviewState = normalizeInterviewState(session?.interview_state || {});
+  const profile = normalizeProfile(session?.profile || {});
+  const summary = session?.summary || "";
+
+  if (userMessage.trim() === "終了") {
+    const endedState = {
+      ...interviewState,
+      mode: null,
+      isFinished: true,
+    };
+
+    await upsertSession(userId, {
+      current_topic: null,
+      interview_state: endedState,
+    });
+
+    const reply = `模擬面接モードを終了しました。お疲れさまでした。
+
+---
+${getNextActionMenuByTopic("mock_interview")}`;
+
+    await saveMessage(userId, "assistant", reply);
+    await replyToLine(replyToken, reply);
+    return;
+  }
+
+  const currentIndex = interviewState.questionIndex || 0;
+  const currentQuestion = MOCK_INTERVIEW_QUESTIONS[currentIndex];
+
+  const feedback = await evaluateMockAnswer(
+    currentQuestion,
+    userMessage,
+    profile,
+    summary
+  );
+
+  const nextAnswers = [
+    ...(Array.isArray(interviewState.answers) ? interviewState.answers : []),
+    {
+      question: currentQuestion,
+      answer: userMessage,
+    },
+  ];
+
+  const nextFeedbacks = [
+    ...(Array.isArray(interviewState.feedbacks) ? interviewState.feedbacks : []),
+    feedback,
+  ];
+
+  const nextIndex = currentIndex + 1;
+
+  if (nextIndex >= MOCK_INTERVIEW_QUESTIONS.length) {
+    const finalReview = await generateMockInterviewFinalReview(
+      nextAnswers,
+      profile,
+      summary
+    );
+
+    const finishedState = {
+      ...interviewState,
+      mode: null,
+      questionIndex: nextIndex,
+      answers: nextAnswers,
+      feedbacks: nextFeedbacks,
+      isFinished: true,
+    };
+
+    await upsertSession(userId, {
+      current_topic: null,
+      interview_state: finishedState,
+    });
+
+    const reply = `【今回のフィードバック】
+${feedback}
+
+====================
+【模擬面接 総評】
+${finalReview}
+
+---
+${getNextActionMenuByTopic("mock_interview")}`;
+
+    await saveMessage(userId, "assistant", reply);
+    await replyToLine(replyToken, reply);
+    return;
+  }
+
+  const nextQuestion = MOCK_INTERVIEW_QUESTIONS[nextIndex];
+
+  const nextState = {
+    ...interviewState,
+    mode: "mock_interview",
+    questionIndex: nextIndex,
+    answers: nextAnswers,
+    feedbacks: nextFeedbacks,
+    isFinished: false,
+  };
+
+  await upsertSession(userId, {
+    current_topic: "mock_interview",
+    interview_state: nextState,
+  });
+
+  const reply = `【フィードバック】
+${feedback}
+
+【次の質問】
+${nextQuestion}`;
+
+  await saveMessage(userId, "assistant", reply);
+  await replyToLine(replyToken, reply);
 }
 
 // ===== Job Suggestion Prompt Builders =====
@@ -1506,6 +1856,7 @@ const SYSTEM_PROMPT = `
 - 職務経歴書完成版
 - 面接対策
 - キャリア相談
+- 模擬面接の前後フォロー
 
 共通ルール：
 - 会話の途中でテーマが変わっても自然に対応する
@@ -1685,6 +2036,8 @@ function getStarterReplyByIntent(intent) {
       return "職務経歴書完成版ですね。これまでの会話内容をもとに、そのまま提出しやすい形でまとめます。";
     case "interview":
       return "面接対策ですね。受ける職種や企業、想定される質問があれば送ってください。";
+    case "mock_interview":
+      return "模擬面接モードですね。「模擬面接」と送ると、本番形式で1問ずつ質問してフィードバックします。";
     case "career":
       return "キャリア相談ですね。今の悩み、転職したい理由、迷っていることをそのまま送ってください。";
     default:
@@ -1715,6 +2068,22 @@ app.post("/webhook", async (req, res) => {
         console.log("User message:", userMessage);
 
         const sessionBefore = await getSession(userId);
+        const beforeInterviewState = normalizeInterviewState(
+          sessionBefore?.interview_state || {}
+        );
+
+        // ===== 模擬面接中の回答処理 =====
+        if (
+          beforeInterviewState.mode === "mock_interview" &&
+          !beforeInterviewState.isFinished &&
+          !detectMockInterviewCommand(userMessage)
+        ) {
+          await saveMessage(userId, "user", userMessage);
+          const latestSession = await getSession(userId);
+          await handleMockInterviewAnswer(userId, replyToken, latestSession, userMessage);
+          continue;
+        }
+
         const resolvedTopic = resolveCurrentTopic(
           userMessage,
           sessionBefore?.current_topic || null
@@ -1733,6 +2102,12 @@ app.post("/webhook", async (req, res) => {
           const reply = getMainMenuText();
           await saveMessage(userId, "assistant", reply);
           await replyToLine(replyToken, reply);
+          continue;
+        }
+
+        // ===== 模擬面接開始 =====
+        if (detectMockInterviewCommand(userMessage) || menuIntent === "mock_interview") {
+          await startMockInterview(userId, replyToken, sessionBefore);
           continue;
         }
 
@@ -1768,9 +2143,6 @@ app.post("/webhook", async (req, res) => {
           continue;
         }
 
-        const beforeInterviewState = normalizeInterviewState(
-          sessionBefore?.interview_state || {}
-        );
         const waitingPreferenceKey = beforeInterviewState.last_asked_preference;
         const updatedProfile = normalizeProfile(updatedSession?.profile || {});
         const activeTopic = resolvedTopic || updatedSession?.current_topic || null;
@@ -1785,7 +2157,11 @@ app.post("/webhook", async (req, res) => {
           const nextQuestion = getNextMissingPreferenceQuestion(updatedProfile);
 
           if (nextQuestion) {
-            const reply = `ありがとうございます。\n\n次に、もう1点だけ教えてください。\n${nextQuestion.question}\n回答できる範囲で大丈夫です。`;
+            const reply = `ありがとうございます。
+
+次に、もう1点だけ教えてください。
+${nextQuestion.question}
+回答できる範囲で大丈夫です。`;
 
             await upsertSession(userId, {
               current_topic: "job_suggestion",
@@ -1870,8 +2246,9 @@ app.post("/webhook", async (req, res) => {
 - 一番気になる案を決める
 - その案向けの職務経歴書を作る
 - 面接対策をする
+- 模擬面接をする
 
-「職務経歴書」「職務経歴書完成版」または「面接対策」と送ってください。`;
+「職務経歴書」「職務経歴書完成版」「面接対策」または「模擬面接」と送ってください。`;
 
                 await saveMessage(userId, "assistant", reply);
                 await replyToLine(replyToken, reply);
