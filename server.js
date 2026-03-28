@@ -229,6 +229,43 @@ function shouldAppendMenu(userText = "", aiText = "") {
   return false;
 }
 
+// ===== Job Suggestion Formatting =====
+function isJobSuggestionContext(text = "") {
+  const t = (text || "").trim();
+  if (!t) return false;
+
+  return (
+    t.includes("求人提案") ||
+    t.includes("求人紹介") ||
+    t.includes("合う求人") ||
+    t.includes("おすすめ求人") ||
+    t.includes("どんな求人") ||
+    t.includes("求人を見たい") ||
+    t.includes("仕事を探したい")
+  );
+}
+
+function buildJobSuggestionInstruction() {
+  return `
+今回は「求人提案」として回答してください。
+
+出力ルール：
+- LINEで読みやすい見出し付き
+- 必ず次の順番で出す
+1. おすすめ理由
+2. 合う点
+3. 懸念点
+4. 次に確認したいこと
+
+追加ルール：
+- 実在求人の断定はしない
+- 今は「どういう求人が合いそうか」の提案でよい
+- 候補が複数あるなら、2〜3パターンに分けて提案してよい
+- 懸念点は厳しめでもよいが、否定的すぎない
+- 最後は必ず次に必要な確認事項で終える
+`;
+}
+
 // ===== Conversation History =====
 async function getRecentMessages(userId, limit = 10) {
   if (!supabase) return [];
@@ -604,7 +641,6 @@ async function updateUserProfile(userId, userMessage) {
     userMessage
   );
 
-  // 発話からprofileが取れなくてもsummaryは更新する
   await upsertSession(userId, {
     profile: mergedProfile,
     summary: nextSummary || existingSummary || null,
@@ -623,7 +659,7 @@ const SYSTEM_PROMPT = `
 - 面接対策
 - キャリア相談
 
-ルール：
+共通ルール：
 - 会話の途中でテーマが変わっても自然に対応する
 - ユーザーが迷っていそうなら、今できることを短く案内する
 - 「求人検索」ではなく「求人提案」という表現を使う
@@ -642,6 +678,10 @@ async function askOpenAI(userId, userMessage) {
     const profile = session?.profile || {};
     const summary = session?.summary || "";
 
+    const extraInstructions = isJobSuggestionContext(userMessage)
+      ? buildJobSuggestionInstruction()
+      : "";
+
     const messages = [
       {
         role: "system",
@@ -659,6 +699,9 @@ async function askOpenAI(userId, userMessage) {
           "このユーザーの現在summaryです。自然に参考にしてください。古そう・不確実そうなら確認しながら使ってください。\n" +
           summary,
       },
+      ...(extraInstructions
+        ? [{ role: "system", content: extraInstructions }]
+        : []),
       ...history.map((m) => ({
         role: m.role,
         content: m.content,
