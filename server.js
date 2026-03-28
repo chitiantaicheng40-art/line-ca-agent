@@ -165,36 +165,62 @@ async function replyToLine(replyToken, text) {
   }
 }
 
+// ===== LINE Loading =====
+async function showLineLoading(userId, seconds = 10) {
+  try {
+    const allowed = [5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60];
+    const loadingSeconds = allowed.includes(seconds) ? seconds : 10;
+
+    await axios.post(
+      "https://api.line.me/v2/bot/chat/loading/start",
+      {
+        chatId: userId,
+        loadingSeconds,
+      },
+      {
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${LINE_CHANNEL_ACCESS_TOKEN}`,
+        },
+      }
+    );
+  } catch (error) {
+    console.error("LINE loading error:", error.response?.data || error.message);
+  }
+}
+
 // ===== Menu Text =====
 function getMainMenuText() {
-  return `途中で話を変えても大丈夫です。
+  return `途中で話題を変えても大丈夫です。
 
-今できること👇
-① 自己分析
-② 求人提案
-③ 職務経歴書・経験整理
-④ 面接対策
-⑤ キャリア相談
-⑥ 模擬面接モード
-⑦ 企業テンプレ追加 / 一覧 / 読み込み
+【できること】
+1. 自己分析
+2. 求人提案
+3. 職務経歴書・経験整理
+4. 面接対策
+5. キャリア相談
+6. 模擬面接
+7. 企業テンプレ管理
 
-やりたいものをそのまま送ってください。
-例：自己分析、求人提案、面接対策、模擬面接
-例：模擬面接 営業企画 厳しめ
-例：模擬面接 RA 厳しめ
-例：模擬面接 リクルート RA 厳しめ
-例：模擬面接 SaaS 営業企画 厳しめ
-例：一旦止める
-例：再開
-例：企業テンプレ追加
-例：企業テンプレ一覧
-例：企業テンプレ: リクルート
-例：前回の模擬面接
-例：前回の改善点
-例：前回との比較
-例：この回答を添削して
-例：厳しめで添削
-例：通過率が上がる言い方にして`;
+【入力例】
+・自己分析
+・求人提案
+・職務経歴書を作りたい
+・面接対策
+・模擬面接 営業企画 厳しめ
+・模擬面接 リクルートRA 厳しめ
+・この回答を添削して
+・厳しめで添削
+・通過率が上がる言い方にして
+・企業テンプレ一覧
+
+【操作】
+・再開
+・一旦止める
+・企業テンプレ追加
+・企業テンプレ: リクルート
+
+やりたいものをそのまま送ってください。`;
 }
 
 function getNextActionMenuByTopic(topic = "") {
@@ -2246,28 +2272,33 @@ ${JSON.stringify(profile, null, 2)}
 function buildResumeInstruction(profile = {}, summary = "", selectedPlan = null) {
   const planGuide =
     selectedPlan === "A"
-      ? "今回は A案（営業企画 / カスタマーサクセス寄り）を前提に、職務経歴書を作成してください。顧客理解、提案力、業務改善、継続支援との親和性を強めに出してください。"
+      ? "今回は A案を前提にしてください。ただし、A案の職種例をそのまま断定的に職歴へ転記しないでください。ユーザーが明示した事実からつながる表現に限定してください。"
       : selectedPlan === "B"
-      ? "今回は B案（事業企画 / 新規事業開発寄り）を前提に、職務経歴書を作成してください。課題整理、関係者調整、業務設計、推進力との親和性を強めに出してください。"
+      ? "今回は B案を前提にしてください。ただし、B案の職種例をそのまま断定的に職歴へ転記しないでください。ユーザーが明示した事実からつながる表現に限定してください。"
       : selectedPlan === "C"
-      ? "今回は C案（マーケティング企画 / 営業企画寄り）を前提に、職務経歴書を作成してください。顧客理解、提案改善、再現性、企画視点との親和性を強めに出してください。"
-      : "まだ案が確定していない場合は、営業企画 / カスタマーサクセス / 企画職に広くつながる形でまとめてください。";
+      ? "今回は C案を前提にしてください。ただし、C案の職種例をそのまま断定的に職歴へ転記しないでください。ユーザーが明示した事実からつながる表現に限定してください。"
+      : "案が未確定なら、ユーザーが明示した事実だけで中立的に整理してください。";
 
   return `
 今回は「職務経歴書・経験整理」として回答してください。
 
-ルール：
+最重要ルール：
+- profile と summary に明示的に存在する情報だけを使う
+- 実際に今回または過去会話でユーザーが明示した内容だけを書く
+- 求人提案で出した職種例を、そのままユーザーの経歴として書いてはいけない
+- 営業経験、法人営業、売上125%、既存顧客対応、顧客提案などは、ユーザーが明示していない限り絶対に書かない
+- 会社名・役職・在籍期間・担当業務・実績のうち、不明なものは [要確認] と書く
+- 推測で数値・資格・受賞歴・役職・担当顧客・KPI・プロジェクト成果を書かない
+- 「〜と思われます」「〜と考えられます」でも、事実の創作はしない
+- 書ける事実が少ない場合は、無理に埋めず簡潔に整理する
+
+追加ルール：
 - 一般論ではなく、ユーザー向けに具体的に書く
-- profile と summary を必ず使う
-- 求人提案で最後に見ていた案に近い内容で書く
 - そのまま職務経歴書に貼れる形にする
 - LINEで読みやすくする
-- 不明な経歴は断定しない
-- 推測で数値・資格・受賞歴を書かない
-- 実際にユーザーが話した内容だけで書く
-- 数値が不明な場合は「◯%」「◯件」ではなく「改善に貢献」「複数案件を担当」と書く
-- わからない部分は「ここを教えてください」と最後に1〜2個だけ聞く
-- 「社内表彰」「LEAN」「Six Sigma」など、ユーザーが明示していない固有名詞・資格・手法は書かない
+- 数値が不明な場合は「◯%」「◯件」ではなく、「改善に取り組んだ」「設備改善を担当した」など事実ベースで書く
+- summary に古い情報があっても、今回の明示情報と矛盾するなら使わない
+- 「システムエンジニア向けに寄せる」ことと「システムエンジニア経験があると書く」ことは別。後者は絶対にしない
 
 案の前提：
 ${planGuide}
@@ -2276,35 +2307,37 @@ ${planGuide}
 
 【職務要約】
 2〜4行
+- 事実が少ない場合は短くてよい
+- 不明な経歴を補完しない
 
 【活かせる経験・強み】
-- ・・・
-- ・・・
-- ・・・
+- 事実ベースで2〜4点
+- 不明なら書きすぎない
 
 【職務経歴の書き方イメージ】
-会社名：
-役職：
-期間：
+会社名：[要確認]
+役職：[要確認]
+期間：[要確認]
 
 - 担当業務
-- 実績
-- 工夫したこと
+- 実績・工夫
+- 強調できる点
 
 【この案向けに強調したいポイント】
-- ・・・
-- ・・・
-- ・・・
+- ユーザーの事実から言える範囲だけ
+- 「〜に親和性がある」「〜へつながる可能性がある」のような表現は可
+- ただし未経験事実を経験済みとして書かない
 
 【次に教えてほしいこと】
-- ・・・
-- ・・・
+- 本当に必要な確認事項だけ1〜3個
 
 禁止事項：
-- 推測の受賞歴を書かない
-- 推測の資格・フレームワークを書かない
-- 一般論の例文を混ぜない
-- 実際に話した内容を優先する
+- 推測の営業経験を書く
+- 推測の売上実績を書く
+- 推測の顧客対応経験を書く
+- 求人提案の内容をそのまま職歴に変換する
+- summary の曖昧情報を断定表現に変える
+- 実際に話していない役職名を書く
 
 現在のselectedPlan:
 ${selectedPlan || "未選択"}
@@ -2944,7 +2977,7 @@ ${JSON.stringify(profile, null, 2)}
     ];
 
     const response = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
+      model: OPENAI_MODEL,
       messages,
       temperature: isJobSuggestionMode ? 0.4 : 0.7,
     });
@@ -3049,6 +3082,10 @@ app.post("/webhook", async (req, res) => {
         const replyToken = event.replyToken;
         const userMessage = (event.message.text || "").trim();
 
+        if (event.source?.type === "user" && userId) {
+          await showLineLoading(userId, 10);
+        }
+
         console.log("User message:", userMessage);
 
         const sessionBefore = await getSession(userId);
@@ -3141,6 +3178,13 @@ app.post("/webhook", async (req, res) => {
           continue;
         }
 
+        // ===== 模擬面接開始 =====
+        if (detectMockInterviewCommand(userMessage)) {
+          await saveMessage(userId, "user", userMessage);
+          await startMockInterview(userId, replyToken, sessionBefore, userMessage);
+          continue;
+        }
+
         // ===== 模擬面接中の回答処理 =====
         if (
           beforeInterviewState.mode === "mock_interview" &&
@@ -3191,47 +3235,20 @@ app.post("/webhook", async (req, res) => {
           continue;
         }
 
-        // ===== 模擬面接開始 =====
-        if (detectMockInterviewCommand(userMessage) || menuIntent === "mock_interview") {
-          const latestSession = await getSession(userId);
-          await startMockInterview(userId, replyToken, latestSession, userMessage);
-          continue;
-        }
-
-        // ===== A/B/C を明示選択したら保存 =====
-        const requestedLabel = detectRequestedSuggestionLabel(userMessage);
-        if (requestedLabel && (resolvedTopic === "job_suggestion" || sessionBefore?.current_topic === "job_suggestion")) {
-          const stepMap = { A: 0, B: 1, C: 2 };
-
+        // ===== A/B/C を選んだら、その案を保存 =====
+        const selectedLabel = detectRequestedSuggestionLabel(userMessage);
+        if (selectedLabel) {
           await upsertSession(userId, {
-            current_topic: "job_suggestion",
             interview_state: {
               ...currentState,
-              jobSuggestionStep: stepMap[requestedLabel],
-              selectedPlan: requestedLabel,
-              lastSelectedPlan: requestedLabel,
-              lastOutputType: "job_suggestion_followup",
+              selectedPlan: selectedLabel,
+              lastSelectedPlan: selectedLabel,
+              lastOutputType: "job_suggestion_select",
             },
           });
-
-          const overrideInstruction = buildJobSuggestionFollowupInstruction(
-            updatedProfile,
-            requestedLabel
-          );
-
-          const reply = await askOpenAI(
-            userId,
-            userMessage,
-            "job_suggestion",
-            overrideInstruction
-          );
-
-          await saveMessage(userId, "assistant", reply);
-          await replyToLine(replyToken, reply);
-          continue;
         }
 
-        // ===== A/B/C 選択後は、職務経歴書を即その案前提で返す =====
+        // ===== A/B/C 選択後は、経験整理も即その案前提で返す =====
         if (menuIntent === "resume" && selectedPlan) {
           await upsertSession(userId, {
             current_topic: "resume",
@@ -3319,7 +3336,7 @@ app.post("/webhook", async (req, res) => {
             menuIntent === "career") &&
           shouldUseStarterReply(userMessage, menuIntent)
         ) {
-          let topicToSave = menuIntent;
+          const topicToSave = menuIntent;
 
           await upsertSession(userId, {
             current_topic: topicToSave,
@@ -3349,10 +3366,9 @@ app.post("/webhook", async (req, res) => {
 
           if (nextQuestion) {
             const reply = `ありがとうございます。
+では次に、こちらを教えてください。
 
-次に、もう1点だけ教えてください。
-${nextQuestion.question}
-回答できる範囲で大丈夫です。`;
+${nextQuestion.question}`;
 
             await upsertSession(userId, {
               current_topic: "job_suggestion",
@@ -3368,47 +3384,49 @@ ${nextQuestion.question}
             await replyToLine(replyToken, reply);
             continue;
           } else {
+            const reply = await generateAutoRefinedJobSuggestion(userId);
+
             await upsertSession(userId, {
               current_topic: "job_suggestion",
               interview_state: {
                 ...currentState,
                 pending_preference_questions: [],
                 last_asked_preference: null,
-                lastOutputType: "job_suggestion_preference_complete",
+                lastOutputType: "job_suggestion_main",
               },
             });
 
-            const regeneratedReply = await generateAutoRefinedJobSuggestion(userId);
-            const finalReply =
-              "ありがとうございます。条件がそろったので、この内容で改めて求人提案します。\n\n" +
-              regeneratedReply;
-
-            await saveMessage(userId, "assistant", finalReply);
-            await replyToLine(replyToken, finalReply);
+            await saveMessage(userId, "assistant", reply);
+            await replyToLine(replyToken, reply);
             continue;
           }
         }
 
-        // ===== 求人提案の続き =====
+        // ===== 求人提案の深掘り =====
         if (activeTopic === "job_suggestion") {
-          const sessionNow = await getSession(userId);
-          const interviewState = normalizeInterviewState(sessionNow?.interview_state || {});
-          const currentStep =
-            typeof interviewState.jobSuggestionStep === "number"
-              ? interviewState.jobSuggestionStep
-              : -1;
+          const explicitLabel = detectRequestedSuggestionLabel(userMessage);
 
-          if (isFollowupRequest(userMessage)) {
+          if (explicitLabel || isNextRequest(userMessage) || isFollowupRequest(userMessage)) {
+            const interviewState = normalizeInterviewState(currentState);
+            const currentStep =
+              typeof interviewState.jobSuggestionStep === "number"
+                ? interviewState.jobSuggestionStep
+                : explicitLabel
+                ? ["A", "B", "C"].indexOf(explicitLabel)
+                : -1;
+
             let targetStep = 0;
 
-            if (isNextRequest(userMessage)) {
+            if (explicitLabel) {
+              targetStep = ["A", "B", "C"].indexOf(explicitLabel);
+            } else if (isNextRequest(userMessage)) {
               if (currentStep >= 2) {
-                const reply = `3つの案を一通り見たので、次は以下に進めます。
+                const reply = `3つの案を一通り見たので、次は以下に進められます。
 
-- 一番気になる案を決める
-- その案向けの職務経歴書を作る
-- 面接対策をする
-- 模擬面接をする
+・職務経歴書
+・職務経歴書完成版
+・面接対策
+・模擬面接
 
 「職務経歴書」「職務経歴書完成版」「面接対策」または「模擬面接」と送ってください。`;
 
