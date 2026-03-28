@@ -179,7 +179,6 @@ function detectMenuIntent(text = "") {
   }
 
   if (t === "4" || t.includes("面接対策")) return "interview";
-
   if (t === "5" || t.includes("キャリア相談")) return "career";
 
   return null;
@@ -348,6 +347,130 @@ function mergeProfile(existingProfile = {}, newPatch = {}) {
   return merged;
 }
 
+// ===== Safe JSON Helpers =====
+function stripCodeFences(text = "") {
+  return String(text || "")
+    .replace(/^```json\s*/i, "")
+    .replace(/^```\s*/i, "")
+    .replace(/\s*```$/i, "")
+    .trim();
+}
+
+function extractFirstJsonObject(text = "") {
+  const s = String(text || "");
+  const start = s.indexOf("{");
+  if (start === -1) return null;
+
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let i = start; i < s.length; i++) {
+    const ch = s[i];
+
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+
+    if (ch === "\\") {
+      escaped = true;
+      continue;
+    }
+
+    if (ch === '"') {
+      inString = !inString;
+      continue;
+    }
+
+    if (inString) continue;
+
+    if (ch === "{") depth++;
+    if (ch === "}") depth--;
+
+    if (depth === 0) {
+      return s.slice(start, i + 1);
+    }
+  }
+
+  return null;
+}
+
+function sanitizeProfilePatch(raw = {}) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+
+  const allowedKeys = new Set([
+    "experience_keywords",
+    "interest_keywords",
+    "desired_salary_man",
+    "work_style_note",
+    "ng_note",
+    "strength_note",
+    "reason_note",
+    "change_timing",
+  ]);
+
+  const cleaned = {};
+
+  for (const [key, value] of Object.entries(raw)) {
+    if (!allowedKeys.has(key)) continue;
+
+    if (key === "experience_keywords" || key === "interest_keywords") {
+      if (Array.isArray(value)) {
+        const arr = value
+          .map((v) => String(v || "").trim())
+          .filter(Boolean)
+          .slice(0, 10);
+        if (arr.length > 0) cleaned[key] = arr;
+      }
+      continue;
+    }
+
+    if (key === "desired_salary_man") {
+      const n = Number(value);
+      if (Number.isFinite(n) && n > 0) {
+        cleaned[key] = Math.round(n);
+      }
+      continue;
+    }
+
+    if (key === "change_timing") {
+      const normalized = String(value || "").trim().toLowerCase();
+      if (["high", "medium", "low"].includes(normalized)) {
+        cleaned[key] = normalized;
+      }
+      continue;
+    }
+
+    const str = String(value || "").trim();
+    if (str) {
+      cleaned[key] = str.slice(0, 500);
+    }
+  }
+
+  return cleaned;
+}
+
+function safeParseProfilePatch(content = "") {
+  const candidates = [
+    String(content || "").trim(),
+    stripCodeFences(content),
+    extractFirstJsonObject(content),
+    extractFirstJsonObject(stripCodeFences(content)),
+  ].filter(Boolean);
+
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(candidate);
+      return sanitizeProfilePatch(parsed);
+    } catch (e) {
+      // continue
+    }
+  }
+
+  return {};
+}
+
 // ===== AI Profile Extraction =====
 async function extractProfilePatchWithAI(userMessage) {
   try {
@@ -362,7 +485,7 @@ async function extractProfilePatchWithAI(userMessage) {
 ユーザーの発話から、転職プロフィールとして保存すべき情報だけをJSONで抽出してください。
 
 出力ルール：
-- 必ずJSONのみを返す
+- 必ずJSONオブジェクトのみを返す
 - コードブロックは使わない
 - 情報がない項目は出さない
 - 推測しない
@@ -390,8 +513,15 @@ change_timing は "high" / "medium" / "low" のいずれか
       ],
     });
 
-    const content = response.choices?.[0]?.message?.content?.trim() || "{}";
-    return JSON.parse(content);
+    const content = response.choices?.[0]?.message?.content || "{}";
+    const parsed = safeParseProfilePatch(content);
+
+    if (!parsed || Object.keys(parsed).length === 0) {
+      console.warn("Profile patch parse failed. raw content:", content);
+      return {};
+    }
+
+    return parsed;
   } catch (error) {
     console.error(
       "extractProfilePatchWithAI error:",
@@ -517,13 +647,9 @@ app.post("/webhook", async (req, res) => {
 
         console.log("User message:", userMessage);
 
-        // 1. ユーザー発話保存
         await saveMessage(userId, "user", userMessage);
-
-        // 2. プロフィール更新
         await updateUserProfile(userId, userMessage);
 
-        // 3. メニュー系分岐
         const menuIntent = detectMenuIntent(userMessage);
 
         if (menuIntent === "show_menu") {
@@ -546,10 +672,8 @@ app.post("/webhook", async (req, res) => {
           continue;
         }
 
-        // 4. 通常会話
         const assistantReply = await askOpenAI(userId, userMessage);
 
-        // 5. 必要ならメニュー追加
         let finalReply = assistantReply;
         const finishedTopic = detectFinishedTopic(userMessage);
 
@@ -559,10 +683,7 @@ app.post("/webhook", async (req, res) => {
           finalReply += `\n\n---\n${getMainMenuText()}`;
         }
 
-        // 6. AI返答保存
         await saveMessage(userId, "assistant", finalReply);
-
-        // 7. LINE返信
         await replyToLine(replyToken, finalReply);
       } catch (eventError) {
         console.error("Event handling error:", eventError);
