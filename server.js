@@ -902,6 +902,7 @@ function buildResumeInstruction(profile = {}, summary = "") {
 - 実際にユーザーが話した内容だけで書く
 - 数値が不明な場合は「◯%」「◯件」ではなく「改善に貢献」「複数案件を担当」と書く
 - わからない部分は「ここを教えてください」と最後に1〜2個だけ聞く
+- 「社内表彰」「LEAN」「Six Sigma」など、ユーザーが明示していない固有名詞・資格・手法は書かない
 
 出力形式：
 
@@ -930,6 +931,12 @@ function buildResumeInstruction(profile = {}, summary = "") {
 【次に教えてほしいこと】
 - ・・・
 - ・・・
+
+禁止事項：
+- 推測の受賞歴を書かない
+- 推測の資格・フレームワークを書かない
+- 一般論の例文を混ぜない
+- 実際に話した内容を優先する
 
 現在のprofile:
 ${JSON.stringify(profile, null, 2)}
