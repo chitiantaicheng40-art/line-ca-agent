@@ -176,6 +176,7 @@ function getMainMenuText() {
 ④ 面接対策
 ⑤ キャリア相談
 ⑥ 模擬面接モード
+⑦ 企業テンプレ追加 / 一覧 / 読み込み
 
 やりたいものをそのまま送ってください。
 例：自己分析、求人提案、面接対策、模擬面接
@@ -183,6 +184,11 @@ function getMainMenuText() {
 例：模擬面接 RA 厳しめ
 例：模擬面接 リクルート RA 厳しめ
 例：模擬面接 SaaS 営業企画 厳しめ
+例：一旦止める
+例：再開
+例：企業テンプレ追加
+例：企業テンプレ一覧
+例：企業テンプレ: リクルート
 例：前回の模擬面接
 例：前回の改善点
 例：前回との比較
@@ -394,7 +400,6 @@ function shouldUseStarterReply(userMessage = "", menuIntent = null) {
   ];
 
   if (menuIntent === "mock_interview") return false;
-
   if (t.length >= 20) return false;
   if (detailHints.some((w) => t.includes(w))) return false;
 
@@ -635,6 +640,8 @@ function normalizeProfile(profile = {}) {
       : profile.avoid_points_in_current_job
       ? [String(profile.avoid_points_in_current_job)]
       : [],
+    waiting_company_template_input: Boolean(profile.waiting_company_template_input),
+    waiting_company_template_delete: Boolean(profile.waiting_company_template_delete),
     ...profile,
   };
 }
@@ -659,7 +666,8 @@ function normalizeInterviewState(interviewState = {}) {
     startedAt: interviewState.startedAt || null,
     type: interviewState.type || "common",
     strictness: interviewState.strictness || "normal",
-    companyTemplate: interviewState.companyTemplate || null,
+    companyTemplate: interviewState.companyTemplate || null, // built-in key
+    companyTemplateName: interviewState.companyTemplateName || null, // custom name
     questionIndex:
       typeof interviewState.questionIndex === "number"
         ? interviewState.questionIndex
@@ -752,6 +760,156 @@ function shouldAskMissingPreferences(aiReply = "", currentTopic = "") {
   return proposalHints.some((word) => text.includes(word));
 }
 
+// ===== Company Template Helpers =====
+function getMergedCompanyTemplates(session = null) {
+  const customTemplates =
+    session?.company_templates && typeof session.company_templates === "object"
+      ? session.company_templates
+      : {};
+
+  return {
+    builtin: MOCK_INTERVIEW_COMPANY_TEMPLATES,
+    custom: customTemplates,
+  };
+}
+
+function isPauseCommand(text = "") {
+  const t = (text || "").trim();
+  return [
+    "一旦止める",
+    "止める",
+    "停止",
+    "一時停止",
+    "模擬面接停止",
+  ].includes(t);
+}
+
+function isResumeCommand(text = "") {
+  const t = (text || "").trim();
+  return [
+    "再開",
+    "続き",
+    "続きから",
+    "再開する",
+    "模擬面接再開",
+  ].includes(t);
+}
+
+function isCompanyTemplateAddCommand(text = "") {
+  return (text || "").trim() === "企業テンプレ追加";
+}
+
+function isCompanyTemplateListCommand(text = "") {
+  return (text || "").trim() === "企業テンプレ一覧";
+}
+
+function isCompanyTemplateDeleteCommand(text = "") {
+  return (text || "").trim() === "企業テンプレ削除";
+}
+
+function extractTemplateUseTarget(text = "") {
+  const t = (text || "").trim();
+
+  if (t.startsWith("企業テンプレ使う:")) {
+    return t.replace("企業テンプレ使う:", "").trim();
+  }
+
+  if (t.startsWith("企業テンプレ:")) {
+    return t.replace("企業テンプレ:", "").trim();
+  }
+
+  return null;
+}
+
+function parseCompanyTemplateText(text = "") {
+  const lines = String(text || "")
+    .split("\n")
+    .map((v) => v.trim())
+    .filter(Boolean);
+
+  const result = {
+    companyName: "",
+    industry: "",
+    appealPoints: [],
+    mockQuestions: [],
+    notes: "",
+  };
+
+  for (const line of lines) {
+    if (line.startsWith("企業名:")) {
+      result.companyName = line.replace("企業名:", "").trim();
+    } else if (line.startsWith("業界:")) {
+      result.industry = line.replace("業界:", "").trim();
+    } else if (line.startsWith("訴求ポイント:")) {
+      result.appealPoints = line
+        .replace("訴求ポイント:", "")
+        .split(/[、,]/)
+        .map((v) => v.trim())
+        .filter(Boolean);
+    } else if (line.startsWith("模擬質問:")) {
+      result.mockQuestions = line
+        .replace("模擬質問:", "")
+        .split(/[、,]/)
+        .map((v) => v.trim())
+        .filter(Boolean);
+    } else if (line.startsWith("メモ:")) {
+      result.notes = line.replace("メモ:", "").trim();
+    }
+  }
+
+  if (!result.companyName) return null;
+  return result;
+}
+
+function getQuestionsFromInterviewState(state = {}, session = null) {
+  const interviewState = normalizeInterviewState(state);
+  const merged = getMergedCompanyTemplates(session);
+
+  if (
+    interviewState.companyTemplateName &&
+    merged.custom[interviewState.companyTemplateName] &&
+    Array.isArray(merged.custom[interviewState.companyTemplateName].mockQuestions) &&
+    merged.custom[interviewState.companyTemplateName].mockQuestions.length > 0
+  ) {
+    return merged.custom[interviewState.companyTemplateName].mockQuestions;
+  }
+
+  if (
+    interviewState.companyTemplate &&
+    merged.builtin[interviewState.companyTemplate] &&
+    Array.isArray(merged.builtin[interviewState.companyTemplate].questions) &&
+    merged.builtin[interviewState.companyTemplate].questions.length > 0
+  ) {
+    return merged.builtin[interviewState.companyTemplate].questions;
+  }
+
+  return (
+    MOCK_INTERVIEW_QUESTIONS_BY_TYPE[interviewState.type] ||
+    MOCK_INTERVIEW_QUESTIONS_BY_TYPE.common
+  );
+}
+
+function getCompanyTemplateLabelFromState(state = {}, session = null) {
+  const interviewState = normalizeInterviewState(state);
+  const merged = getMergedCompanyTemplates(session);
+
+  if (
+    interviewState.companyTemplateName &&
+    merged.custom[interviewState.companyTemplateName]
+  ) {
+    return interviewState.companyTemplateName;
+  }
+
+  if (
+    interviewState.companyTemplate &&
+    merged.builtin[interviewState.companyTemplate]
+  ) {
+    return merged.builtin[interviewState.companyTemplate].label;
+  }
+
+  return "汎用";
+}
+
 // ===== Session / Profile =====
 async function getSession(userId) {
   if (!supabase) return null;
@@ -774,6 +932,13 @@ async function getSession(userId) {
     profile: normalizeProfile(data.profile || {}),
     interview_state: normalizeInterviewState(data.interview_state || {}),
     current_topic: data.current_topic || null,
+    current_mode: data.current_mode || "normal",
+    is_paused: Boolean(data.is_paused),
+    paused_state: data.paused_state || {},
+    company_templates:
+      data.company_templates && typeof data.company_templates === "object"
+        ? data.company_templates
+        : {},
   };
 }
 
@@ -824,6 +989,22 @@ async function upsertSession(userId, patch = {}) {
       patch.interview_state !== undefined
         ? patch.interview_state
         : current?.interview_state || {},
+    current_mode:
+      patch.current_mode !== undefined
+        ? patch.current_mode
+        : current?.current_mode || "normal",
+    is_paused:
+      patch.is_paused !== undefined
+        ? patch.is_paused
+        : current?.is_paused || false,
+    paused_state:
+      patch.paused_state !== undefined
+        ? patch.paused_state
+        : current?.paused_state || {},
+    company_templates:
+      patch.company_templates !== undefined
+        ? patch.company_templates
+        : current?.company_templates || {},
     plan_type: patch.plan_type ?? current?.plan_type ?? "free",
     usage_count:
       typeof patch.usage_count === "number"
@@ -848,6 +1029,13 @@ async function upsertSession(userId, patch = {}) {
     profile: normalizeProfile(data.profile || {}),
     interview_state: normalizeInterviewState(data.interview_state || {}),
     current_topic: data.current_topic || null,
+    current_mode: data.current_mode || "normal",
+    is_paused: Boolean(data.is_paused),
+    paused_state: data.paused_state || {},
+    company_templates:
+      data.company_templates && typeof data.company_templates === "object"
+        ? data.company_templates
+        : {},
   };
 }
 
@@ -893,6 +1081,7 @@ function getDefaultMockInterviewState(type = "common", strictness = "normal") {
     type,
     strictness,
     companyTemplate: null,
+    companyTemplateName: null,
     startedAt: new Date().toISOString(),
     questionIndex: 0,
     answers: [],
@@ -961,23 +1150,27 @@ async function startMockInterview(
   const currentState = normalizeInterviewState(sessionBefore?.interview_state || {});
   const { type, strictness, companyTemplate } = getMockInterviewTypeAndStrictness(userMessage);
 
+  const customTemplateName =
+    !companyTemplate && currentState.companyTemplateName
+      ? currentState.companyTemplateName
+      : null;
+
   const newState = {
     ...currentState,
     ...getDefaultMockInterviewState(type, strictness),
     companyTemplate: companyTemplate || null,
+    companyTemplateName: customTemplateName,
   };
+
+  const questions = getQuestionsFromInterviewState(newState, sessionBefore);
 
   await upsertSession(userId, {
     current_topic: "mock_interview",
+    current_mode: "mock_interview",
+    is_paused: false,
+    paused_state: {},
     interview_state: newState,
   });
-
-  const questions = companyTemplate
-    ? MOCK_INTERVIEW_COMPANY_TEMPLATES[companyTemplate]?.questions ||
-      MOCK_INTERVIEW_QUESTIONS_BY_TYPE[type] ||
-      MOCK_INTERVIEW_QUESTIONS_BY_TYPE.common
-    : MOCK_INTERVIEW_QUESTIONS_BY_TYPE[type] ||
-      MOCK_INTERVIEW_QUESTIONS_BY_TYPE.common;
 
   const typeLabelMap = {
     common: "一般",
@@ -993,10 +1186,7 @@ async function startMockInterview(
     hard: "厳しめ",
   };
 
-  const companyLabel =
-    companyTemplate && MOCK_INTERVIEW_COMPANY_TEMPLATES[companyTemplate]
-      ? MOCK_INTERVIEW_COMPANY_TEMPLATES[companyTemplate].label
-      : "汎用";
+  const companyLabel = getCompanyTemplateLabelFromState(newState, sessionBefore);
 
   const reply = `模擬面接モードを開始します。
 
@@ -1008,6 +1198,7 @@ async function startMockInterview(
 私が面接官として1問ずつ質問します。
 できるだけ本番のつもりで回答してください。
 途中でやめるときは「終了」と送ってください。
+一時停止したいときは「一旦止める」と送ってください。
 
 【第1問】
 ${questions[0]}`;
@@ -1479,6 +1670,9 @@ async function handleMockInterviewAnswer(
 
     await upsertSession(userId, {
       current_topic: null,
+      current_mode: "normal",
+      is_paused: false,
+      paused_state: {},
       interview_state: endedState,
     });
 
@@ -1492,13 +1686,7 @@ ${getNextActionMenuByTopic("mock_interview")}`;
     return;
   }
 
-  const questions = interviewState.companyTemplate
-    ? MOCK_INTERVIEW_COMPANY_TEMPLATES[interviewState.companyTemplate]?.questions ||
-      MOCK_INTERVIEW_QUESTIONS_BY_TYPE[interviewState.type] ||
-      MOCK_INTERVIEW_QUESTIONS_BY_TYPE.common
-    : MOCK_INTERVIEW_QUESTIONS_BY_TYPE[interviewState.type] ||
-      MOCK_INTERVIEW_QUESTIONS_BY_TYPE.common;
-
+  const questions = getQuestionsFromInterviewState(interviewState, session);
   const currentIndex = interviewState.questionIndex || 0;
   const currentQuestion = questions[currentIndex];
 
@@ -1545,6 +1733,9 @@ ${getNextActionMenuByTopic("mock_interview")}`;
 
     await upsertSession(userId, {
       current_topic: null,
+      current_mode: "normal",
+      is_paused: false,
+      paused_state: {},
       interview_state: finalState,
     });
 
@@ -1578,6 +1769,9 @@ ${getNextActionMenuByTopic("mock_interview")}`;
 
   await upsertSession(userId, {
     current_topic: "mock_interview",
+    current_mode: "mock_interview",
+    is_paused: false,
+    paused_state: {},
     interview_state: nextState,
   });
 
@@ -1587,6 +1781,237 @@ ${feedback}
 【次の質問】
 ${nextQuestion}`;
 
+  await saveMessage(userId, "assistant", reply);
+  await replyToLine(replyToken, reply);
+}
+
+async function handlePauseMockInterview(userId, replyToken, session) {
+  const state = normalizeInterviewState(session?.interview_state || {});
+
+  if (state.mode !== "mock_interview" || state.isFinished) {
+    const reply =
+      "今は模擬面接中ではありません。始める場合は「模擬面接」と送ってください。";
+    await saveMessage(userId, "assistant", reply);
+    await replyToLine(replyToken, reply);
+    return;
+  }
+
+  await upsertSession(userId, {
+    current_mode: "normal",
+    is_paused: true,
+    paused_state: {
+      pausedAt: new Date().toISOString(),
+      current_mode: "mock_interview",
+      interview_state: state,
+    },
+  });
+
+  const reply =
+    "模擬面接を一時停止しました。\n再開したいときは「再開」と送ってください。";
+  await saveMessage(userId, "assistant", reply);
+  await replyToLine(replyToken, reply);
+}
+
+async function handleResumeMockInterview(userId, replyToken, session) {
+  const pausedState = session?.paused_state || {};
+  const restoredState = normalizeInterviewState(
+    pausedState.interview_state || session?.interview_state || {}
+  );
+
+  if (!session?.is_paused) {
+    const reply =
+      "今は一時停止中の模擬面接はありません。始める場合は「模擬面接」と送ってください。";
+    await saveMessage(userId, "assistant", reply);
+    await replyToLine(replyToken, reply);
+    return;
+  }
+
+  const questions = getQuestionsFromInterviewState(restoredState, session);
+  const currentIndex = restoredState.questionIndex || 0;
+  const nextQuestion = questions[currentIndex];
+
+  await upsertSession(userId, {
+    current_topic: "mock_interview",
+    current_mode: "mock_interview",
+    is_paused: false,
+    paused_state: {},
+    interview_state: {
+      ...restoredState,
+      mode: "mock_interview",
+      isFinished: false,
+    },
+  });
+
+  const reply = `模擬面接を再開します。
+
+【続きの質問】
+${nextQuestion}`;
+
+  await saveMessage(userId, "assistant", reply);
+  await replyToLine(replyToken, reply);
+}
+
+async function handleCompanyTemplateAddStart(userId, replyToken, session) {
+  await upsertSession(userId, {
+    profile: {
+      ...(session?.profile || {}),
+      waiting_company_template_input: true,
+      waiting_company_template_delete: false,
+    },
+  });
+
+  const reply = `企業テンプレ追加モードに入りました。
+以下の形式で送ってください。
+
+企業名: リクルート
+業界: 人材 / HRTech
+訴求ポイント: 社会影響が大きい、営業→企画へ広がる、顧客課題の深掘り
+模擬質問: なぜリクルート？、転職理由は？、営業経験をどう活かす？
+メモ: 深掘り多め`;
+
+  await saveMessage(userId, "assistant", reply);
+  await replyToLine(replyToken, reply);
+}
+
+async function handleCompanyTemplateInput(userId, replyToken, session, userMessage) {
+  const parsed = parseCompanyTemplateText(userMessage);
+
+  if (!parsed) {
+    const reply =
+      "企業テンプレの形式が読み取れませんでした。\n「企業名: ○○」を含めて、指定フォーマットで送ってください。";
+    await saveMessage(userId, "assistant", reply);
+    await replyToLine(replyToken, reply);
+    return;
+  }
+
+  const currentTemplates = session?.company_templates || {};
+
+  const nextTemplates = {
+    ...currentTemplates,
+    [parsed.companyName]: parsed,
+  };
+
+  await upsertSession(userId, {
+    company_templates: nextTemplates,
+    profile: {
+      ...(session?.profile || {}),
+      waiting_company_template_input: false,
+    },
+  });
+
+  const reply = `企業テンプレ「${parsed.companyName}」を保存しました。
+使うときは「企業テンプレ: ${parsed.companyName}」と送ってください。`;
+
+  await saveMessage(userId, "assistant", reply);
+  await replyToLine(replyToken, reply);
+}
+
+async function handleCompanyTemplateList(userId, replyToken, session) {
+  const templates = session?.company_templates || {};
+  const names = Object.keys(templates);
+
+  if (names.length === 0) {
+    const reply =
+      "保存されている企業テンプレはまだありません。追加する場合は「企業テンプレ追加」と送ってください。";
+    await saveMessage(userId, "assistant", reply);
+    await replyToLine(replyToken, reply);
+    return;
+  }
+
+  const text = [
+    "保存中の企業テンプレ一覧です。",
+    ...names.map((name, i) => `${i + 1}. ${name}`),
+    "",
+    "使う場合は「企業テンプレ: 企業名」と送ってください。",
+  ].join("\n");
+
+  await saveMessage(userId, "assistant", text);
+  await replyToLine(replyToken, text);
+}
+
+async function handleCompanyTemplateSelect(userId, replyToken, session, templateName) {
+  const templates = session?.company_templates || {};
+  const selected = templates[templateName];
+
+  if (!selected) {
+    const reply = `「${templateName}」の企業テンプレは見つかりませんでした。
+「企業テンプレ一覧」で確認してください。`;
+    await saveMessage(userId, "assistant", reply);
+    await replyToLine(replyToken, reply);
+    return;
+  }
+
+  await upsertSession(userId, {
+    interview_state: {
+      ...(session?.interview_state || {}),
+      companyTemplate: null,
+      companyTemplateName: templateName,
+    },
+  });
+
+  const message = [
+    `企業テンプレ「${templateName}」を読み込みました。`,
+    `業界: ${selected.industry || "未設定"}`,
+    `訴求ポイント: ${(selected.appealPoints || []).join(" / ") || "未設定"}`,
+    `想定質問: ${(selected.mockQuestions || []).join(" / ") || "未設定"}`,
+    `メモ: ${selected.notes || "なし"}`,
+    "",
+    "模擬面接を始めるときは「模擬面接」と送ってください。",
+  ].join("\n");
+
+  await saveMessage(userId, "assistant", message);
+  await replyToLine(replyToken, message);
+}
+
+async function handleCompanyTemplateDeleteStart(userId, replyToken, session) {
+  await upsertSession(userId, {
+    profile: {
+      ...(session?.profile || {}),
+      waiting_company_template_delete: true,
+      waiting_company_template_input: false,
+    },
+  });
+
+  const reply =
+    "削除したい企業名を「削除: 企業名」の形式で送ってください。\n例: 削除: リクルート";
+  await saveMessage(userId, "assistant", reply);
+  await replyToLine(replyToken, reply);
+}
+
+async function handleCompanyTemplateDeleteExecute(
+  userId,
+  replyToken,
+  session,
+  userMessage
+) {
+  const companyName = String(userMessage || "").replace("削除:", "").trim();
+  const templates = { ...(session?.company_templates || {}) };
+
+  if (!templates[companyName]) {
+    const reply = `「${companyName}」の企業テンプレは見つかりませんでした。`;
+    await saveMessage(userId, "assistant", reply);
+    await replyToLine(replyToken, reply);
+    return;
+  }
+
+  delete templates[companyName];
+
+  await upsertSession(userId, {
+    company_templates: templates,
+    profile: {
+      ...(session?.profile || {}),
+      waiting_company_template_delete: false,
+    },
+    interview_state: {
+      ...(session?.interview_state || {}),
+      companyTemplateName:
+        session?.interview_state?.companyTemplateName === companyName
+          ? null
+          : session?.interview_state?.companyTemplateName || null,
+    },
+  });
+
+  const reply = `企業テンプレ「${companyName}」を削除しました。`;
   await saveMessage(userId, "assistant", reply);
   await replyToLine(replyToken, reply);
 }
@@ -2378,6 +2803,10 @@ async function updateUserProfile(userId, userMessage) {
     summary: nextSummary || existingSummary || "",
     interview_state: existing?.interview_state || {},
     current_topic: existing?.current_topic || null,
+    current_mode: existing?.current_mode || "normal",
+    is_paused: existing?.is_paused || false,
+    paused_state: existing?.paused_state || {},
+    company_templates: existing?.company_templates || {},
   };
 }
 
@@ -2610,6 +3039,91 @@ app.post("/webhook", async (req, res) => {
           sessionBefore?.interview_state || {}
         );
 
+        // ===== 一時停止 / 再開 =====
+        if (isPauseCommand(userMessage)) {
+          await saveMessage(userId, "user", userMessage);
+          await handlePauseMockInterview(userId, replyToken, sessionBefore);
+          continue;
+        }
+
+        if (isResumeCommand(userMessage)) {
+          await saveMessage(userId, "user", userMessage);
+          const latestSession = await getSession(userId);
+          await handleResumeMockInterview(userId, replyToken, latestSession);
+          continue;
+        }
+
+        if (sessionBefore?.is_paused) {
+          await saveMessage(userId, "user", userMessage);
+          const reply =
+            "今は模擬面接を一時停止中です。再開する場合は「再開」、終了する場合は「終了」と送ってください。";
+          await saveMessage(userId, "assistant", reply);
+          await replyToLine(replyToken, reply);
+          continue;
+        }
+
+        // ===== 企業テンプレ追加 / 一覧 / 読み込み / 削除 =====
+        if (isCompanyTemplateAddCommand(userMessage)) {
+          await saveMessage(userId, "user", userMessage);
+          await handleCompanyTemplateAddStart(userId, replyToken, sessionBefore);
+          continue;
+        }
+
+        if (isCompanyTemplateListCommand(userMessage)) {
+          await saveMessage(userId, "user", userMessage);
+          await handleCompanyTemplateList(userId, replyToken, sessionBefore);
+          continue;
+        }
+
+        if (isCompanyTemplateDeleteCommand(userMessage)) {
+          await saveMessage(userId, "user", userMessage);
+          await handleCompanyTemplateDeleteStart(userId, replyToken, sessionBefore);
+          continue;
+        }
+
+        if (
+          sessionBefore?.profile?.waiting_company_template_input &&
+          userMessage.includes("企業名:")
+        ) {
+          await saveMessage(userId, "user", userMessage);
+          const latestSession = await getSession(userId);
+          await handleCompanyTemplateInput(
+            userId,
+            replyToken,
+            latestSession,
+            userMessage
+          );
+          continue;
+        }
+
+        if (
+          sessionBefore?.profile?.waiting_company_template_delete &&
+          userMessage.startsWith("削除:")
+        ) {
+          await saveMessage(userId, "user", userMessage);
+          const latestSession = await getSession(userId);
+          await handleCompanyTemplateDeleteExecute(
+            userId,
+            replyToken,
+            latestSession,
+            userMessage
+          );
+          continue;
+        }
+
+        const templateTarget = extractTemplateUseTarget(userMessage);
+        if (templateTarget) {
+          await saveMessage(userId, "user", userMessage);
+          const latestSession = await getSession(userId);
+          await handleCompanyTemplateSelect(
+            userId,
+            replyToken,
+            latestSession,
+            templateTarget
+          );
+          continue;
+        }
+
         // ===== 模擬面接中の回答処理 =====
         if (
           beforeInterviewState.mode === "mock_interview" &&
@@ -2657,7 +3171,8 @@ app.post("/webhook", async (req, res) => {
 
         // ===== 模擬面接開始 =====
         if (detectMockInterviewCommand(userMessage) || menuIntent === "mock_interview") {
-          await startMockInterview(userId, replyToken, sessionBefore, userMessage);
+          const latestSession = await getSession(userId);
+          await startMockInterview(userId, replyToken, latestSession, userMessage);
           continue;
         }
 
