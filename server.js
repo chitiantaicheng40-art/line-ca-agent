@@ -285,7 +285,27 @@ function isJobSuggestionContext(text = "") {
   );
 }
 
-function buildJobSuggestionInstruction() {
+function buildConditionStatusInstruction(profile = {}) {
+  const p = normalizeProfile(profile);
+
+  return `
+このユーザーの希望条件の取得状況です。
+求人提案の最後に付ける【次に確認したいこと】では、未取得のものだけを書くこと。
+
+取得済み:
+- 希望勤務地: ${isFieldFilled(p.desired_location) ? "取得済み" : "未取得"}
+- 許容年収下限: ${isFieldFilled(p.minimum_salary) ? "取得済み" : "未取得"}
+- 出社頻度: ${isFieldFilled(p.office_attendance) ? "取得済み" : "未取得"}
+- 業界希望: ${isFieldFilled(p.preferred_industries) ? "取得済み" : "未取得"}
+- 現職で避けたいこと: ${isFieldFilled(p.avoid_points_in_current_job) ? "取得済み" : "未取得"}
+
+重要ルール:
+- 取得済みの項目は【次に確認したいこと】に絶対に書かない
+- 未取得項目がない場合は【次に確認したいこと】自体を書かない
+`;
+}
+
+function buildJobSuggestionInstruction(profile = {}) {
   return `
 今回は「求人提案」として回答してください。
 
@@ -309,7 +329,7 @@ function buildJobSuggestionInstruction() {
 - 合う点
 - 懸念点
 
-最後に必ず
+最後は必要な場合のみ
 【次に確認したいこと】
 を付ける
 
@@ -363,13 +383,6 @@ function buildJobSuggestionInstruction() {
 ・会社によっては営業色が強く残る
 ・「企画」と言いながら、実際は営業推進に近い求人も多い
 
-【次に確認したいこと】
-- どのくらい企画寄りに行きたいか
-- SaaS / IT / 人材 / メーカーなど、興味のある業界
-- フルリモート必須か、週1〜2出社なら許容できるか
-- 年収600万以上の中でも、最低ラインと理想ライン
-- 今後「マネジメント」と「専門性」のどちらを伸ばしたいか
-
 追加ルール：
 - 実在求人の断定はしない
 - 今は「どういう求人が合いそうか」の提案でよい
@@ -387,6 +400,10 @@ function buildJobSuggestionInstruction() {
 - 1案あたり長くしすぎない
 - LINEで読みやすいように、空行と箇条書きを使う
 - 各案の職種例は、可能なら業界名も入れる（例：SaaS企業の営業企画 / 人材会社の事業企画）
+- 取得済み条件は【次に確認したいこと】に書かない
+- 未取得項目がない場合は【次に確認したいこと】を出さない
+
+${buildConditionStatusInstruction(profile)}
 `;
 }
 
@@ -1006,7 +1023,7 @@ async function askOpenAI(userId, userMessage) {
     const summary = session?.summary || "";
 
     const extraInstructions = isJobSuggestionContext(userMessage)
-      ? buildJobSuggestionInstruction()
+      ? buildJobSuggestionInstruction(profile)
       : "";
 
     const messages = [
@@ -1064,7 +1081,7 @@ ${JSON.stringify(profile, null, 2)}
 
 async function generateAutoRefinedJobSuggestion(userId) {
   const autoPrompt =
-    "保存済みの条件がそろったので、現在のプロフィールを前提に改めて求人提案してください。A/B/Cの3パターンで、より条件に沿って具体的に提案してください。";
+    "保存済みの条件がそろったので、現在のプロフィールを前提に改めて求人提案してください。A/B/Cの3パターンで、より条件に沿って具体的に提案してください。未取得項目がなければ【次に確認したいこと】は出さないでください。";
 
   return await askOpenAI(userId, autoPrompt);
 }
@@ -1172,13 +1189,9 @@ app.post("/webhook", async (req, res) => {
             });
 
             const regeneratedReply = await generateAutoRefinedJobSuggestion(userId);
-            let finalReply =
+            const finalReply =
               "ありがとうございます。条件がそろったので、この内容で改めて求人提案します。\n\n" +
               regeneratedReply;
-
-            if (shouldAppendMenu(userMessage, regeneratedReply)) {
-              finalReply += `\n\n---\n${getMainMenuText()}`;
-            }
 
             await saveMessage(userId, "assistant", finalReply);
             await replyToLine(replyToken, finalReply);
@@ -1214,9 +1227,12 @@ app.post("/webhook", async (req, res) => {
           }
         }
 
-        if (finishedTopic) {
+        const shouldSkipTopicMenu =
+          isJobSuggestionContext(userMessage) || shouldAskMissingPreferences(assistantReply);
+
+        if (!shouldSkipTopicMenu && finishedTopic) {
           finalReply += `\n\n---\n${getNextActionMenuByTopic(finishedTopic)}`;
-        } else if (shouldAppendMenu(userMessage, assistantReply)) {
+        } else if (!shouldSkipTopicMenu && shouldAppendMenu(userMessage, assistantReply)) {
           finalReply += `\n\n---\n${getMainMenuText()}`;
         }
 
