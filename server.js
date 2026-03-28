@@ -10,16 +10,50 @@ const PORT = process.env.PORT || 10000;
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
 
 // ===== Mock Interview =====
-const MOCK_INTERVIEW_QUESTIONS = [
-  "これまでのご経歴を1〜2分程度で簡単にお願いします。",
-  "なぜ転職を考えているのですか？",
-  "これまでの仕事で成果を出した経験を教えてください。",
-  "逆に、仕事で苦労したことや失敗したこと、それをどう乗り越えたか教えてください。",
-  "なぜこの職種・業界を志望しているのですか？",
-  "あなたの強みと弱みを教えてください。",
-  "入社後にどのような価値を出せると考えていますか？",
-  "最後に、何か質問はありますか？",
-];
+const MOCK_INTERVIEW_QUESTIONS_BY_TYPE = {
+  common: [
+    "これまでのご経歴を1〜2分程度で簡単にお願いします。",
+    "なぜ転職を考えているのですか？",
+    "これまでの仕事で成果を出した経験を教えてください。",
+    "あなたの強みやスキルについて教えてください。それをどのように仕事に活かしてきたか、具体的な例を交えてお話しください。",
+    "逆に、仕事で苦労したことや失敗したこと、それをどう乗り越えたか教えてください。",
+    "なぜこの職種・業界を志望しているのですか？",
+    "最後に、何か質問はありますか？",
+  ],
+
+  sales: [
+    "これまでの営業経験を簡単に教えてください。",
+    "最も成果を出した営業経験について、工夫したことも含めて教えてください。",
+    "数字が厳しい状況のとき、どのように立て直しますか？",
+    "顧客から厳しい要望やクレームを受けたとき、どのように対応しますか？",
+    "あなたが営業として他の人より強いと思う点は何ですか？",
+    "なぜ営業職を続けたいと考えているのですか？",
+  ],
+
+  cs: [
+    "これまで顧客の課題解決をした経験について教えてください。",
+    "顧客の利用が進まない場合、どのように改善しますか？",
+    "解約リスクの高い顧客に対して、どのようにアプローチしますか？",
+    "顧客と社内の板挟みになったとき、どのように調整しますか？",
+    "カスタマーサクセスとして最も重要だと思うことは何ですか？",
+  ],
+
+  planning: [
+    "なぜ営業企画・事業企画に挑戦したいのですか？",
+    "これまでに業務改善や仕組み化を行った経験を教えてください。",
+    "現場の課題をどのように整理し、施策に落とし込んできましたか？",
+    "数字やデータを使って改善した経験があれば教えてください。",
+    "営業企画として、入社後どのようなことに取り組みたいですか？",
+  ],
+
+  ra: [
+    "採用要件を定義するときに、最も重要だと考えていることは何ですか？",
+    "採用意欲が低い企業に対して、どのように提案しますか？",
+    "年収レンジが低い企業に対して、どのように候補者集客の難しさを伝えますか？",
+    "企業と候補者の希望が合わないとき、どのように調整しますか？",
+    "あなたが考える、優秀なRAとはどのような人ですか？",
+  ],
+};
 
 // ===== OpenAI =====
 const openai = new OpenAI({
@@ -98,7 +132,9 @@ function getMainMenuText() {
 ⑥ 模擬面接モード
 
 やりたいものをそのまま送ってください。
-例：自己分析、求人提案、面接対策、模擬面接`;
+例：自己分析、求人提案、面接対策、模擬面接
+例：模擬面接 営業企画 厳しめ
+例：模擬面接 RA 厳しめ`;
 }
 
 function getNextActionMenuByTopic(topic = "") {
@@ -229,19 +265,14 @@ function detectMenuIntent(text = "") {
 
   if (t === "4" || t === "面接対策") return "interview";
   if (t === "5" || t === "キャリア相談") return "career";
-  if (t === "6" || t === "模擬面接" || t === "模擬面接モード") return "mock_interview";
+  if (t === "6" || t.includes("模擬面接")) return "mock_interview";
 
   return null;
 }
 
 function detectMockInterviewCommand(text = "") {
   const t = (text || "").trim().toLowerCase();
-  return (
-    t === "模擬面接" ||
-    t === "模擬面接モード" ||
-    t === "mock interview" ||
-    t === "mock_interview"
-  );
+  return t.includes("模擬面接") || t.includes("mock interview") || t.includes("mock_interview");
 }
 
 function shouldUseStarterReply(userMessage = "", menuIntent = null) {
@@ -275,6 +306,8 @@ function shouldUseStarterReply(userMessage = "", menuIntent = null) {
     "企業",
     "志望動機",
   ];
+
+  if (menuIntent === "mock_interview") return false;
 
   if (t.length >= 20) return false;
   if (detailHints.some((w) => t.includes(w))) return false;
@@ -538,6 +571,8 @@ function normalizeInterviewState(interviewState = {}) {
 
     mode: interviewState.mode || null,
     startedAt: interviewState.startedAt || null,
+    type: interviewState.type || "common",
+    strictness: interviewState.strictness || "normal",
     questionIndex:
       typeof interviewState.questionIndex === "number"
         ? interviewState.questionIndex
@@ -764,10 +799,11 @@ async function saveMessage(userId, role, content) {
 }
 
 // ===== Mock Interview Helpers =====
-function getDefaultMockInterviewState(baseState = {}) {
+function getDefaultMockInterviewState(type = "common", strictness = "normal") {
   return {
-    ...normalizeInterviewState(baseState),
     mode: "mock_interview",
+    type,
+    strictness,
     startedAt: new Date().toISOString(),
     questionIndex: 0,
     answers: [],
@@ -776,35 +812,110 @@ function getDefaultMockInterviewState(baseState = {}) {
   };
 }
 
-async function startMockInterview(userId, replyToken, sessionBefore = null) {
+function getMockInterviewTypeAndStrictness(userMessage = "") {
+  const lower = String(userMessage || "").toLowerCase();
+
+  let type = "common";
+  if (lower.includes("営業企画") || lower.includes("事業企画")) {
+    type = "planning";
+  } else if (
+    lower.includes("ra") ||
+    lower.includes("リクルーティングアドバイザー")
+  ) {
+    type = "ra";
+  } else if (
+    lower.includes("cs") ||
+    lower.includes("カスタマーサクセス")
+  ) {
+    type = "cs";
+  } else if (lower.includes("営業")) {
+    type = "sales";
+  }
+
+  let strictness = "normal";
+  if (lower.includes("厳しめ")) {
+    strictness = "hard";
+  } else if (lower.includes("やさしめ")) {
+    strictness = "easy";
+  }
+
+  return { type, strictness };
+}
+
+async function startMockInterview(
+  userId,
+  replyToken,
+  sessionBefore = null,
+  userMessage = ""
+) {
   const currentState = normalizeInterviewState(sessionBefore?.interview_state || {});
-  const newState = getDefaultMockInterviewState(currentState);
+  const { type, strictness } = getMockInterviewTypeAndStrictness(userMessage);
+
+  const newState = {
+    ...currentState,
+    ...getDefaultMockInterviewState(type, strictness),
+  };
 
   await upsertSession(userId, {
     current_topic: "mock_interview",
     interview_state: newState,
   });
 
-  const firstQuestion = MOCK_INTERVIEW_QUESTIONS[0];
+  const questions =
+    MOCK_INTERVIEW_QUESTIONS_BY_TYPE[type] ||
+    MOCK_INTERVIEW_QUESTIONS_BY_TYPE.common;
+
+  const typeLabelMap = {
+    common: "一般",
+    sales: "営業",
+    cs: "カスタマーサクセス",
+    planning: "営業企画・事業企画",
+    ra: "RA",
+  };
+
+  const strictnessLabelMap = {
+    easy: "やさしめ",
+    normal: "通常",
+    hard: "厳しめ",
+  };
 
   const reply = `模擬面接モードを開始します。
+
+【設定】
+職種：${typeLabelMap[type]}
+厳しさ：${strictnessLabelMap[strictness]}
 
 私が面接官として1問ずつ質問します。
 できるだけ本番のつもりで回答してください。
 途中でやめるときは「終了」と送ってください。
 
 【第1問】
-${firstQuestion}`;
+${questions[0]}`;
 
   await saveMessage(userId, "assistant", reply);
   await replyToLine(replyToken, reply);
 }
 
-async function evaluateMockAnswer(question, answer, profile = {}, summary = "") {
+async function evaluateMockAnswer(
+  question,
+  answer,
+  strictness = "normal",
+  profile = {},
+  summary = ""
+) {
   try {
+    const strictnessPrompt = {
+      easy: "やさしめに評価し、良い点を多めに伝えてください。",
+      normal: "実務的かつバランス良く評価してください。",
+      hard:
+        "面接官としてかなり厳しめに評価し、曖昧さ・抽象さ・弱い表現を厳しく指摘してください。",
+    };
+
     const prompt = `
 あなたは非常に優秀な採用面接官です。
-以下の質問と回答に対して、実務的に厳しめかつ建設的にフィードバックしてください。
+${strictnessPrompt[strictness]}
+
+以下の質問と回答に対して、具体的かつ実践的にフィードバックしてください。
 
 候補者プロフィール:
 ${JSON.stringify(profile, null, 2)}
@@ -833,6 +944,9 @@ ${answer}
 - 簡潔で実践的に
 - 甘すぎる評価にしない
 - ただし否定的すぎず、改善可能な形で返す
+- 候補者が明示していない数値・成果・役職・KPIは絶対に創作しない
+- 数字が不明な場合は「具体的な実績を補足すると良い」と伝える
+- 改善回答例でも、事実未確認の数字は使わない
 `;
 
     const completion = await openai.chat.completions.create({
@@ -841,7 +955,7 @@ ${answer}
         {
           role: "system",
           content:
-            "あなたは一流企業の採用面接官です。評価は厳しめだが建設的です。",
+            "あなたは一流企業の採用面接官です。厳しくても建設的にフィードバックしてください。",
         },
         {
           role: "user",
@@ -858,19 +972,29 @@ ${answer}
 }
 
 async function generateMockInterviewFinalReview(
-  answers = [],
+  interviewState,
   profile = {},
   summary = ""
 ) {
   try {
+    const answers = Array.isArray(interviewState?.answers) ? interviewState.answers : [];
+
     const formatted = answers
       .map((item, i) => {
         return `【Q${i + 1}】${item.question}\n【A${i + 1}】${item.answer}`;
       })
       .join("\n\n");
 
+    const strictnessPrompt = {
+      easy: "やや前向きに、伸びしろも含めて評価してください。",
+      normal: "実務的かつバランス良く評価してください。",
+      hard: "かなり厳しめに、通過しない理由も明確に評価してください。",
+    };
+
     const prompt = `
 あなたは非常に優秀な採用面接官です。
+${strictnessPrompt[interviewState?.strictness || "normal"]}
+
 以下は模擬面接の回答一覧です。全体を見て総評してください。
 
 候補者プロフィール:
@@ -906,6 +1030,7 @@ ${formatted}
 - 簡潔で実践的に
 - 厳しめだが建設的に
 - 数値の点数表記ではなく、文章評価でよい
+- 候補者が明示していない数値・成果・役職・KPIは絶対に創作しない
 `;
 
     const completion = await openai.chat.completions.create({
@@ -965,12 +1090,17 @@ ${getNextActionMenuByTopic("mock_interview")}`;
     return;
   }
 
+  const questions =
+    MOCK_INTERVIEW_QUESTIONS_BY_TYPE[interviewState.type] ||
+    MOCK_INTERVIEW_QUESTIONS_BY_TYPE.common;
+
   const currentIndex = interviewState.questionIndex || 0;
-  const currentQuestion = MOCK_INTERVIEW_QUESTIONS[currentIndex];
+  const currentQuestion = questions[currentIndex];
 
   const feedback = await evaluateMockAnswer(
     currentQuestion,
     userMessage,
+    interviewState.strictness || "normal",
     profile,
     summary
   );
@@ -990,14 +1120,8 @@ ${getNextActionMenuByTopic("mock_interview")}`;
 
   const nextIndex = currentIndex + 1;
 
-  if (nextIndex >= MOCK_INTERVIEW_QUESTIONS.length) {
-    const finalReview = await generateMockInterviewFinalReview(
-      nextAnswers,
-      profile,
-      summary
-    );
-
-    const finishedState = {
+  if (nextIndex >= questions.length) {
+    const finalState = {
       ...interviewState,
       mode: null,
       questionIndex: nextIndex,
@@ -1006,9 +1130,15 @@ ${getNextActionMenuByTopic("mock_interview")}`;
       isFinished: true,
     };
 
+    const finalReview = await generateMockInterviewFinalReview(
+      finalState,
+      profile,
+      summary
+    );
+
     await upsertSession(userId, {
       current_topic: null,
-      interview_state: finishedState,
+      interview_state: finalState,
     });
 
     const reply = `【今回のフィードバック】
@@ -1026,7 +1156,7 @@ ${getNextActionMenuByTopic("mock_interview")}`;
     return;
   }
 
-  const nextQuestion = MOCK_INTERVIEW_QUESTIONS[nextIndex];
+  const nextQuestion = questions[nextIndex];
 
   const nextState = {
     ...interviewState,
@@ -2035,7 +2165,7 @@ function getStarterReplyByIntent(intent) {
     case "interview":
       return "面接対策ですね。受ける職種や企業、想定される質問があれば送ってください。";
     case "mock_interview":
-      return "模擬面接モードですね。「模擬面接」と送ると、本番形式で1問ずつ質問してフィードバックします。";
+      return "模擬面接モードですね。例：模擬面接 営業企画 厳しめ / 模擬面接 RA 厳しめ のように送ると、職種別・厳しさ別で進められます。";
     case "career":
       return "キャリア相談ですね。今の悩み、転職したい理由、迷っていることをそのまま送ってください。";
     default:
@@ -2105,7 +2235,7 @@ app.post("/webhook", async (req, res) => {
 
         // ===== 模擬面接開始 =====
         if (detectMockInterviewCommand(userMessage) || menuIntent === "mock_interview") {
-          await startMockInterview(userId, replyToken, sessionBefore);
+          await startMockInterview(userId, replyToken, sessionBefore, userMessage);
           continue;
         }
 
