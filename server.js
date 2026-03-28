@@ -1515,21 +1515,37 @@ app.post("/webhook", async (req, res) => {
           continue;
         }
 
-        if (
-          (menuIntent === "self_analysis" ||
-            menuIntent === "job_suggestion" ||
-            menuIntent === "resume" ||
-            menuIntent === "interview" ||
-            menuIntent === "career") &&
-          shouldUseStarterReply(userMessage, menuIntent)
-        ) {
-          await upsertSession(userId, { current_topic: menuIntent });
+       if (
+  (menuIntent === "self_analysis" ||
+    menuIntent === "job_suggestion" ||
+    menuIntent === "resume" ||
+    menuIntent === "interview" ||
+    menuIntent === "career") &&
+  shouldUseStarterReply(userMessage, menuIntent)
+) {
+  let topicToSave = menuIntent;
 
-          const reply = getStarterReplyByIntent(menuIntent);
-          await saveMessage(userId, "assistant", reply);
-          await replyToLine(replyToken, reply);
-          continue;
-        }
+  // 面接対策だけは確実に interview を保存
+  if (menuIntent === "interview") {
+    topicToSave = "interview";
+  }
+
+  await upsertSession(userId, {
+    current_topic: topicToSave,
+    interview_state: {
+      ...(sessionBefore?.interview_state || {}),
+    },
+  });
+
+  const reply = getStarterReplyByIntent(menuIntent);
+
+  await saveMessage(userId, "assistant", reply);
+  await replyToLine(replyToken, reply);
+
+  console.log("saved current_topic =", topicToSave);
+
+  continue;
+}
 
         const beforeInterviewState = normalizeInterviewState(
           sessionBefore?.interview_state || {}
