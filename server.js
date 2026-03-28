@@ -55,6 +55,52 @@ const MOCK_INTERVIEW_QUESTIONS_BY_TYPE = {
   ],
 };
 
+const MOCK_INTERVIEW_COMPANY_TEMPLATES = {
+  recruit_ra: {
+    label: "リクルート RA",
+    questions: [
+      "採用要件を定義するときに、最も重要だと考えていることは何ですか？",
+      "採用意欲が低い企業に対して、どのように提案しますか？",
+      "年収レンジが低い企業に対して、どのように候補者集客の難しさを伝えますか？",
+      "企業と候補者の希望が合わないとき、どのように調整しますか？",
+      "あなたが考える、優秀なRAとはどのような人ですか？",
+    ],
+  },
+
+  saas_planning: {
+    label: "SaaS 営業企画",
+    questions: [
+      "なぜSaaS企業の営業企画に挑戦したいのですか？",
+      "営業プロセスのどこに課題があるか、どのように特定しますか？",
+      "KPI設計をするとしたら、どの数字を重要視しますか？",
+      "現場の営業が新しい運用に反発した場合、どのように進めますか？",
+      "営業企画として、入社後3か月で何を優先して取り組みますか？",
+    ],
+  },
+
+  saas_sales: {
+    label: "SaaS 営業",
+    questions: [
+      "SaaS営業として成果を出すために、最も重要だと思うことは何ですか？",
+      "初回商談で顧客の課題をどう引き出しますか？",
+      "受注確度の低い案件をどのように見極めますか？",
+      "競合比較で不利な状況のとき、どのように提案しますか？",
+      "継続的に成果を出すために、自分でどのような改善を回しますか？",
+    ],
+  },
+
+  human_sales: {
+    label: "人材営業",
+    questions: [
+      "人材営業として企業の採用課題をどう捉えますか？",
+      "求人要件が曖昧な企業に対して、どのように整理を進めますか？",
+      "採用が難航している企業に対して、どのような打ち手を提案しますか？",
+      "他社エージェントとの差別化をどのように伝えますか？",
+      "人材営業として成果を出す人の共通点は何だと思いますか？",
+    ],
+  },
+};
+
 // ===== OpenAI =====
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -135,6 +181,8 @@ function getMainMenuText() {
 例：自己分析、求人提案、面接対策、模擬面接
 例：模擬面接 営業企画 厳しめ
 例：模擬面接 RA 厳しめ
+例：模擬面接 リクルート RA 厳しめ
+例：模擬面接 SaaS 営業企画 厳しめ
 例：前回の模擬面接
 例：前回の改善点
 例：前回との比較`;
@@ -592,6 +640,7 @@ function normalizeInterviewState(interviewState = {}) {
     startedAt: interviewState.startedAt || null,
     type: interviewState.type || "common",
     strictness: interviewState.strictness || "normal",
+    companyTemplate: interviewState.companyTemplate || null,
     questionIndex:
       typeof interviewState.questionIndex === "number"
         ? interviewState.questionIndex
@@ -824,6 +873,7 @@ function getDefaultMockInterviewState(type = "common", strictness = "normal") {
     mode: "mock_interview",
     type,
     strictness,
+    companyTemplate: null,
     startedAt: new Date().toISOString(),
     questionIndex: 0,
     answers: [],
@@ -837,7 +887,27 @@ function getMockInterviewTypeAndStrictness(userMessage = "") {
   const lower = String(userMessage || "").toLowerCase();
 
   let type = "common";
-  if (lower.includes("営業企画") || lower.includes("事業企画")) {
+  let companyTemplate = null;
+
+  if (
+    lower.includes("リクルート") &&
+    (lower.includes("ra") || lower.includes("リクルーティングアドバイザー"))
+  ) {
+    companyTemplate = "recruit_ra";
+    type = "ra";
+  } else if (
+    lower.includes("saas") &&
+    (lower.includes("営業企画") || lower.includes("事業企画"))
+  ) {
+    companyTemplate = "saas_planning";
+    type = "planning";
+  } else if (lower.includes("saas") && lower.includes("営業")) {
+    companyTemplate = "saas_sales";
+    type = "sales";
+  } else if (lower.includes("人材") && lower.includes("営業")) {
+    companyTemplate = "human_sales";
+    type = "sales";
+  } else if (lower.includes("営業企画") || lower.includes("事業企画")) {
     type = "planning";
   } else if (
     lower.includes("ra") ||
@@ -860,7 +930,7 @@ function getMockInterviewTypeAndStrictness(userMessage = "") {
     strictness = "easy";
   }
 
-  return { type, strictness };
+  return { type, strictness, companyTemplate };
 }
 
 async function startMockInterview(
@@ -870,11 +940,12 @@ async function startMockInterview(
   userMessage = ""
 ) {
   const currentState = normalizeInterviewState(sessionBefore?.interview_state || {});
-  const { type, strictness } = getMockInterviewTypeAndStrictness(userMessage);
+  const { type, strictness, companyTemplate } = getMockInterviewTypeAndStrictness(userMessage);
 
   const newState = {
     ...currentState,
     ...getDefaultMockInterviewState(type, strictness),
+    companyTemplate: companyTemplate || null,
   };
 
   await upsertSession(userId, {
@@ -882,9 +953,12 @@ async function startMockInterview(
     interview_state: newState,
   });
 
-  const questions =
-    MOCK_INTERVIEW_QUESTIONS_BY_TYPE[type] ||
-    MOCK_INTERVIEW_QUESTIONS_BY_TYPE.common;
+  const questions = companyTemplate
+    ? MOCK_INTERVIEW_COMPANY_TEMPLATES[companyTemplate]?.questions ||
+      MOCK_INTERVIEW_QUESTIONS_BY_TYPE[type] ||
+      MOCK_INTERVIEW_QUESTIONS_BY_TYPE.common
+    : MOCK_INTERVIEW_QUESTIONS_BY_TYPE[type] ||
+      MOCK_INTERVIEW_QUESTIONS_BY_TYPE.common;
 
   const typeLabelMap = {
     common: "一般",
@@ -900,9 +974,15 @@ async function startMockInterview(
     hard: "厳しめ",
   };
 
+  const companyLabel =
+    companyTemplate && MOCK_INTERVIEW_COMPANY_TEMPLATES[companyTemplate]
+      ? MOCK_INTERVIEW_COMPANY_TEMPLATES[companyTemplate].label
+      : "汎用";
+
   const reply = `模擬面接モードを開始します。
 
 【設定】
+テンプレ：${companyLabel}
 職種：${typeLabelMap[type]}
 厳しさ：${strictnessLabelMap[strictness]}
 
@@ -985,7 +1065,10 @@ ${answer}
       ],
     });
 
-    return completion.choices?.[0]?.message?.content?.trim() || "フィードバックを生成できませんでした。";
+    return (
+      completion.choices?.[0]?.message?.content?.trim() ||
+      "フィードバックを生成できませんでした。"
+    );
   } catch (error) {
     console.error("evaluateMockAnswer error:", error.response?.data || error.message);
     return "フィードバック生成中にエラーが発生しました。";
@@ -1079,7 +1162,10 @@ ${formatted}
       ],
     });
 
-    return completion.choices?.[0]?.message?.content?.trim() || "総評を生成できませんでした。";
+    return (
+      completion.choices?.[0]?.message?.content?.trim() ||
+      "総評を生成できませんでした。"
+    );
   } catch (error) {
     console.error(
       "generateMockInterviewFinalReview error:",
@@ -1281,9 +1367,12 @@ ${getNextActionMenuByTopic("mock_interview")}`;
     return;
   }
 
-  const questions =
-    MOCK_INTERVIEW_QUESTIONS_BY_TYPE[interviewState.type] ||
-    MOCK_INTERVIEW_QUESTIONS_BY_TYPE.common;
+  const questions = interviewState.companyTemplate
+    ? MOCK_INTERVIEW_COMPANY_TEMPLATES[interviewState.companyTemplate]?.questions ||
+      MOCK_INTERVIEW_QUESTIONS_BY_TYPE[interviewState.type] ||
+      MOCK_INTERVIEW_QUESTIONS_BY_TYPE.common
+    : MOCK_INTERVIEW_QUESTIONS_BY_TYPE[interviewState.type] ||
+      MOCK_INTERVIEW_QUESTIONS_BY_TYPE.common;
 
   const currentIndex = interviewState.questionIndex || 0;
   const currentQuestion = questions[currentIndex];
@@ -2360,7 +2449,7 @@ function getStarterReplyByIntent(intent) {
     case "interview":
       return "面接対策ですね。受ける職種や企業、想定される質問があれば送ってください。";
     case "mock_interview":
-      return "模擬面接モードですね。例：模擬面接 営業企画 厳しめ / 模擬面接 RA 厳しめ のように送ると、職種別・厳しさ別で進められます。";
+      return "模擬面接モードですね。例：模擬面接 営業企画 厳しめ / 模擬面接 RA 厳しめ / 模擬面接 リクルート RA 厳しめ / 模擬面接 SaaS 営業企画 厳しめ のように送ると、テンプレ別で進められます。";
     case "career":
       return "キャリア相談ですね。今の悩み、転職したい理由、迷っていることをそのまま送ってください。";
     default:
