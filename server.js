@@ -547,6 +547,140 @@ function shouldAskMissingPreferences(aiReply = "", currentTopic = "") {
   return proposalHints.some((word) => text.includes(word));
 }
 
+// ===== Session / Profile =====
+async function getSession(userId) {
+  if (!supabase) return null;
+
+  const { data, error } = await supabase
+    .from("line_ca_sessions")
+    .select("*")
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (error) {
+    console.error("Supabase getSession error:", error.message);
+    return null;
+  }
+
+  if (!data) return null;
+
+  return {
+    ...data,
+    profile: normalizeProfile(data.profile || {}),
+    interview_state: normalizeInterviewState(data.interview_state || {}),
+    current_topic: data.current_topic || null,
+  };
+}
+
+function mergeUniqueStringArray(a = [], b = []) {
+  return [...new Set([...(a || []), ...(b || [])])];
+}
+
+function mergeProfile(existing = {}, patch = {}) {
+  const base = normalizeProfile(existing);
+
+  return normalizeProfile({
+    ...base,
+    ...patch,
+    experience_keywords: mergeUniqueStringArray(
+      base.experience_keywords,
+      patch.experience_keywords
+    ),
+    interest_keywords: mergeUniqueStringArray(
+      base.interest_keywords,
+      patch.interest_keywords
+    ),
+    preferred_industries: mergeUniqueStringArray(
+      base.preferred_industries,
+      patch.preferred_industries
+    ),
+    avoid_points_in_current_job: mergeUniqueStringArray(
+      base.avoid_points_in_current_job,
+      patch.avoid_points_in_current_job
+    ),
+  });
+}
+
+async function upsertSession(userId, patch = {}) {
+  if (!supabase) return null;
+
+  const current = await getSession(userId);
+
+  const payload = {
+    user_id: userId,
+    profile: mergeProfile(current?.profile || {}, patch.profile || {}),
+    summary:
+      patch.summary !== undefined ? patch.summary : current?.summary || null,
+    current_topic:
+      patch.current_topic !== undefined
+        ? patch.current_topic
+        : current?.current_topic || null,
+    interview_state:
+      patch.interview_state !== undefined
+        ? patch.interview_state
+        : current?.interview_state || {},
+    plan_type: patch.plan_type ?? current?.plan_type ?? "free",
+    usage_count:
+      typeof patch.usage_count === "number"
+        ? patch.usage_count
+        : current?.usage_count ?? 0,
+    updated_at: new Date().toISOString(),
+  };
+
+  const { data, error } = await supabase
+    .from("line_ca_sessions")
+    .upsert(payload, { onConflict: "user_id" })
+    .select()
+    .single();
+
+  if (error) {
+    console.error("Supabase upsertSession error:", error.message);
+    return null;
+  }
+
+  return {
+    ...data,
+    profile: normalizeProfile(data.profile || {}),
+    interview_state: normalizeInterviewState(data.interview_state || {}),
+    current_topic: data.current_topic || null,
+  };
+}
+
+// ===== Conversation History =====
+async function getRecentMessages(userId, limit = 10) {
+  if (!supabase) return [];
+
+  const { data, error } = await supabase
+    .from("line_conversations")
+    .select("role, content, created_at")
+    .eq("user_id", userId)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+
+  if (error) {
+    console.error("Supabase getRecentMessages error:", error.message);
+    return [];
+  }
+
+  return (data || []).reverse();
+}
+
+async function saveMessage(userId, role, content) {
+  if (!supabase) return;
+
+  const { error } = await supabase.from("line_conversations").insert([
+    {
+      user_id: userId,
+      role,
+      content,
+    },
+  ]);
+
+  if (error) {
+    console.error("Supabase saveMessage error:", error.message);
+  }
+}
+
 // ===== Job Suggestion Prompt Builders =====
 function buildConditionStatusInstruction(profile = {}) {
   const p = normalizeProfile(profile);
@@ -1091,6 +1225,30 @@ async function updateUserProfile(userId, userMessage) {
     current_topic: existing?.current_topic || null,
   };
 }
+
+// ===== System Prompt =====
+const SYSTEM_PROMPT = `
+あなたは優秀なキャリアアドバイザーです。
+ユーザーに対して、自然で親しみやすく、でも実務的に役立つ回答をしてください。
+
+対応できること：
+- 自己分析
+- 求人提案
+- 職務経歴書・経験整理
+- 面接対策
+- キャリア相談
+
+共通ルール：
+- 会話の途中でテーマが変わっても自然に対応する
+- ユーザーが迷っていそうなら、今できることを短く案内する
+- 「求人検索」ではなく「求人提案」という表現を使う
+- 回答はLINEで読みやすい長さと改行を意識する
+- 上から目線にならない
+- 不明点は決めつけず、確認ベースで伝える
+- できるだけ次の一歩が明確になるように返す
+- 保存済みプロフィールは自然に活かすが、未確定情報として扱う
+- 求人提案では、保存済みの希望勤務地・年収下限・出社頻度・業界希望・避けたいことがあれば優先して反映する
+`;
 
 // ===== OpenAI Ask =====
 async function askOpenAI(userId, userMessage, forcedTopic = null, overrideInstruction = "") {
