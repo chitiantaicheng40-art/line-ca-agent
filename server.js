@@ -1218,6 +1218,14 @@ app.post("/webhook", async (req, res) => {
           sessionBefore?.current_topic || null
         );
 
+        console.log("resolvedTopic =", resolvedTopic);
+        console.log("session current_topic =", sessionBefore?.current_topic);
+        console.log(
+          "isJobSuggestionMode =",
+          isJobSuggestionContext(userMessage) ||
+            (resolvedTopic || sessionBefore?.current_topic) === "job_suggestion"
+        );
+
         if (resolvedTopic !== (sessionBefore?.current_topic || null)) {
           await upsertSession(userId, { current_topic: resolvedTopic });
         }
@@ -1304,7 +1312,10 @@ app.post("/webhook", async (req, res) => {
         let finalReply = assistantReply;
         const finishedTopic = detectFinishedTopic(userMessage);
 
-        if (activeTopic === "job_suggestion" || shouldAskMissingPreferences(assistantReply, activeTopic)) {
+        if (
+          activeTopic === "job_suggestion" ||
+          shouldAskMissingPreferences(assistantReply, activeTopic)
+        ) {
           const singleQuestion = buildSingleMissingQuestionMessage(updatedProfile);
           const nextQuestion = getNextMissingPreferenceQuestion(updatedProfile);
 
