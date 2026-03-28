@@ -340,10 +340,12 @@ function isJobSuggestionContext(text = "") {
 
 function isFollowupRequest(text = "") {
   const s = String(text || "").trim();
+
   return [
     "お願いします",
     "お願い",
     "次",
+    "次へ",
     "続けて",
     "続き",
     "もっと詳しく",
@@ -351,7 +353,46 @@ function isFollowupRequest(text = "") {
     "具体的に",
     "深掘り",
     "もっと",
+    "おすすめ順に詳しく",
   ].includes(s);
+}
+
+function isNextRequest(text = "") {
+  const s = String(text || "").trim();
+  return ["次", "次へ", "続けて", "別案", "ほか"].includes(s);
+}
+
+function detectRequestedSuggestionLabel(text = "") {
+  const s = String(text || "").trim().toUpperCase();
+
+  if (
+    s === "A" ||
+    s.includes("Aが気になる") ||
+    s.includes("Aを詳しく") ||
+    s.includes("Aを深掘り")
+  ) {
+    return "A";
+  }
+
+  if (
+    s === "B" ||
+    s.includes("Bが気になる") ||
+    s.includes("Bを詳しく") ||
+    s.includes("Bを深掘り")
+  ) {
+    return "B";
+  }
+
+  if (
+    s === "C" ||
+    s.includes("Cが気になる") ||
+    s.includes("Cを詳しく") ||
+    s.includes("Cを深掘り")
+  ) {
+    return "C";
+  }
+
+  return null;
 }
 
 function buildConditionStatusInstruction(profile = {}) {
@@ -438,6 +479,16 @@ function buildJobSuggestionInstruction(profile = {}) {
 【おすすめ応募順】
 A → B → C
 
+最後は必ず以下で締めること：
+
+気になる案があれば、A / B / C のどれかを送ってください。
+例：
+- Aが気になる
+- Bを詳しく知りたい
+- Cを深掘りしたい
+
+まだ迷う場合は「おすすめ順に詳しく」と送っていただければ、こちらで順番に深掘りします。
+
 最後は必要な場合のみ
 【次に確認したいこと】
 を付ける
@@ -483,34 +534,38 @@ A → B → C
 - 未取得項目がない場合は【次に確認したいこと】を出さない
 - 「一致度」「応募優先度」が1つでも欠けたら不正な出力
 - 省略表現を使わず、A/B/Cすべてに完全な項目を入れる
+- 「気になる職種があればお知らせください」のような曖昧な締め方はしない
 
 ${buildConditionStatusInstruction(profile)}
 `;
 }
 
-function buildJobSuggestionFollowupInstruction(profile = {}) {
+function buildJobSuggestionFollowupInstruction(profile = {}, label = "A") {
   return `
 今回は「求人提案の深掘り」です。
-ユーザーは直前のA/B/C提案を見た上で、「お願いします」「次」「もっと詳しく」などの継続メッセージを送っています。
+ユーザーは ${label} 案を詳しく見たい、またはおすすめ順に深掘りしたいと考えています。
 
 重要ルール：
 - 前回のA/B/C提案全文を繰り返さない
 - 謝罪文は書かない
 - 冒頭は自然に
-- 応募優先度が高い案から1つだけ深掘りする
-- 既に深掘り済みかどうかは履歴を見て、できるだけ同じ深掘りを繰り返さない
-- まだ深掘りされていなさそうな案を優先する
+- 今回は ${label} 案だけを深掘りする
 - profile にない事実は断定しない
 - ユーザーが明示していない経験は断定しない
 - 「〜経験を活かせる」と言い切れない場合は、「〜志向と親和性が高い」「〜に挑戦しやすい」と表現する
 - LINEで読みやすくする
 - 3案全部を再掲しない
 
+案の対応：
+- A = 営業企画 / カスタマーサクセス（SaaS企業）
+- B = 事業企画 / 新規事業開発（人材業界）
+- C = マーケティング企画 / SaaSの営業企画
+
 出力フォーマット：
-ありがとうございます。今回は、前回の提案の中から最も優先度が高い案を1つ深掘りします。
+ありがとうございます。まずは ${label} 案を深掘りします。
 
 【今回深掘りする案】
-A / B / C のいずれか
+${label}
 
 【向いている人】
 - ・・・
@@ -536,14 +591,9 @@ A / B / C のいずれか
 - ・・・
 
 【次のおすすめアクション】
-- 求人の深掘りを続ける
-- 職務経歴書整理に進む
-- 面接対策に進む
-
-補足：
-- Aが最優先なら、まずAを深掘りする
-- 次に「次」と来たらB、その次はC、のように履歴を見てなるべく重複を避ける
-- profile の希望勤務地、年収、出社頻度、業界希望、避けたいことを必ず反映する
+- この案をさらに深掘りする
+- この案向けの職務経歴書整理に進む
+- この案向けの面接対策に進む
 
 現在のプロフィール:
 ${JSON.stringify(profile, null, 2)}
@@ -591,154 +641,6 @@ function cleanJobSuggestionLead(text = "") {
   }
 
   return s;
-}
-
-// ===== Preference Missing-Field Logic =====
-const REQUIRED_PREFERENCE_FIELDS = [
-  {
-    key: "desired_location",
-    label: "希望勤務地",
-    question:
-      "希望勤務地を教えてください。（例：東京23区、大阪市、福岡市、フルリモート希望 など）",
-  },
-  {
-    key: "minimum_salary",
-    label: "許容年収下限",
-    question:
-      "許容年収の下限を教えてください。（例：500万円以上、現年収以上 など）",
-  },
-  {
-    key: "office_attendance",
-    label: "出社頻度",
-    question:
-      "希望する出社頻度を教えてください。（例：フル出社、週3出社、週1出社、フルリモート など）",
-  },
-  {
-    key: "preferred_industries",
-    label: "業界希望",
-    question:
-      "興味のある業界があれば教えてください。（例：IT、人材、SaaS、メーカー など）",
-  },
-  {
-    key: "avoid_points_in_current_job",
-    label: "現職で避けたいこと",
-    question:
-      "次の転職先で避けたいことを教えてください。（例：長時間労働、トップダウン、転勤が多い、テレアポ中心 など）",
-  },
-];
-
-function normalizeProfile(profile = {}) {
-  return {
-    experience_keywords: Array.isArray(profile.experience_keywords)
-      ? profile.experience_keywords
-      : [],
-    interest_keywords: Array.isArray(profile.interest_keywords)
-      ? profile.interest_keywords
-      : [],
-    desired_location: profile.desired_location || "",
-    minimum_salary: profile.minimum_salary || "",
-    office_attendance: profile.office_attendance || "",
-    preferred_industries: Array.isArray(profile.preferred_industries)
-      ? profile.preferred_industries
-      : profile.preferred_industries
-      ? [String(profile.preferred_industries)]
-      : [],
-    avoid_points_in_current_job: Array.isArray(profile.avoid_points_in_current_job)
-      ? profile.avoid_points_in_current_job
-      : profile.avoid_points_in_current_job
-      ? [String(profile.avoid_points_in_current_job)]
-      : [],
-    ...profile,
-  };
-}
-
-function normalizeInterviewState(interviewState = {}) {
-  return {
-    pending_preference_questions: Array.isArray(
-      interviewState.pending_preference_questions
-    )
-      ? interviewState.pending_preference_questions
-      : [],
-    last_asked_preference: interviewState.last_asked_preference || null,
-    ...interviewState,
-  };
-}
-
-function isFieldFilled(value) {
-  if (Array.isArray(value)) {
-    return value.map((v) => String(v || "").trim()).filter(Boolean).length > 0;
-  }
-  return value !== undefined && value !== null && String(value).trim() !== "";
-}
-
-function getMissingPreferenceFields(profile = {}) {
-  const normalized = normalizeProfile(profile);
-  return REQUIRED_PREFERENCE_FIELDS.filter(
-    (item) => !isFieldFilled(normalized[item.key])
-  );
-}
-
-function getNextMissingPreferenceQuestion(profile = {}) {
-  const missing = getMissingPreferenceFields(profile);
-  if (missing.length === 0) return null;
-
-  return {
-    key: missing[0].key,
-    label: missing[0].label,
-    question: missing[0].question,
-    remainingKeys: missing.map((item) => item.key),
-  };
-}
-
-function buildSingleMissingQuestionMessage(profile = {}) {
-  const next = getNextMissingPreferenceQuestion(profile);
-  if (!next) return "";
-
-  return `\n\n---\nよりマッチ度の高い求人に絞るため、まずは1点だけ教えてください。\n${next.question}\n回答できる範囲で大丈夫です。`;
-}
-
-function isLikelySimplePreferenceAnswer(userMessage = "") {
-  const t = (userMessage || "").trim();
-  if (!t) return false;
-  if (detectMenuIntent(t)) return false;
-  if (isJobSuggestionContext(t)) return false;
-
-  const longQuestionHints = [
-    "どう思う",
-    "相談",
-    "提案",
-    "面接",
-    "職務経歴書",
-    "自己分析",
-    "キャリア",
-  ];
-
-  if (longQuestionHints.some((w) => t.includes(w))) return false;
-  if (t.length > 100) return false;
-
-  return true;
-}
-
-function shouldAskMissingPreferences(aiReply = "", currentTopic = "") {
-  const text = String(aiReply || "");
-
-  const proposalHints = [
-    "求人",
-    "職種例",
-    "おすすめ理由",
-    "合う点",
-    "懸念点",
-    "安定寄り",
-    "成長寄り",
-    "バランス寄り",
-    "ポジション",
-    "ご提案",
-    "一致度",
-    "応募優先度",
-  ];
-
-  if (currentTopic === "job_suggestion") return true;
-  return proposalHints.some((word) => text.includes(word));
 }
 
 // ===== Conversation History =====
@@ -1210,7 +1112,7 @@ const SYSTEM_PROMPT = `
 `;
 
 // ===== OpenAI Ask =====
-async function askOpenAI(userId, userMessage, forcedTopic = null) {
+async function askOpenAI(userId, userMessage, forcedTopic = null, overrideInstruction = "") {
   try {
     const history = await getRecentMessages(userId, 12);
     const session = await getSession(userId);
@@ -1225,11 +1127,12 @@ async function askOpenAI(userId, userMessage, forcedTopic = null) {
       currentTopic === "job_suggestion" && isFollowupRequest(userMessage);
 
     const extraInstructions =
-      isJobSuggestionMode && isFollowup
-        ? buildJobSuggestionFollowupInstruction(profile)
+      overrideInstruction ||
+      (isJobSuggestionMode && isFollowup
+        ? buildJobSuggestionFollowupInstruction(profile, "A")
         : isJobSuggestionMode
         ? buildJobSuggestionInstruction(profile)
-        : "";
+        : "");
 
     const messages = [
       {
@@ -1292,7 +1195,12 @@ ${JSON.stringify(profile, null, 2)}
     console.log("isFollowup =", isFollowup);
     console.log("jobSuggestionFormatValid(first) =", isValidJobSuggestionFormat(reply));
 
-    if (isJobSuggestionMode && !isFollowup && !isValidJobSuggestionFormat(reply)) {
+    if (
+      isJobSuggestionMode &&
+      !overrideInstruction &&
+      !isFollowup &&
+      !isValidJobSuggestionFormat(reply)
+    ) {
       const retryMessages = [
         ...messages,
         {
@@ -1321,7 +1229,7 @@ ${JSON.stringify(profile, null, 2)}
       }
     }
 
-    if (isJobSuggestionMode && !isFollowup) {
+    if (isJobSuggestionMode && !overrideInstruction && !isFollowup) {
       reply = cleanJobSuggestionLead(reply);
     }
 
@@ -1385,14 +1293,6 @@ app.post("/webhook", async (req, res) => {
           sessionBefore?.current_topic || null
         );
 
-        console.log("resolvedTopic =", resolvedTopic);
-        console.log("session current_topic =", sessionBefore?.current_topic);
-        console.log(
-          "isJobSuggestionMode =",
-          isJobSuggestionContext(userMessage) ||
-            (resolvedTopic || sessionBefore?.current_topic) === "job_suggestion"
-        );
-
         if (resolvedTopic !== (sessionBefore?.current_topic || null)) {
           await upsertSession(userId, { current_topic: resolvedTopic });
         }
@@ -1431,8 +1331,6 @@ app.post("/webhook", async (req, res) => {
         const waitingPreferenceKey = beforeInterviewState.last_asked_preference;
         const updatedProfile = normalizeProfile(updatedSession?.profile || {});
         const activeTopic = resolvedTopic || updatedSession?.current_topic || null;
-        const isFollowup =
-          activeTopic === "job_suggestion" && isFollowupRequest(userMessage);
 
         if (
           activeTopic === "job_suggestion" &&
@@ -1476,10 +1374,104 @@ app.post("/webhook", async (req, res) => {
           }
         }
 
+        // ===== 求人提案の続き =====
+        if (activeTopic === "job_suggestion") {
+          const sessionNow = await getSession(userId);
+          const interviewState = normalizeInterviewState(sessionNow?.interview_state || {});
+          const requestedLabel = detectRequestedSuggestionLabel(userMessage);
+          const currentStep =
+            typeof interviewState.jobSuggestionStep === "number"
+              ? interviewState.jobSuggestionStep
+              : -1;
+
+          // A/B/C 指名
+          if (requestedLabel) {
+            const stepMap = { A: 0, B: 1, C: 2 };
+            const targetStep = stepMap[requestedLabel];
+
+            await upsertSession(userId, {
+              current_topic: "job_suggestion",
+              interview_state: {
+                ...interviewState,
+                jobSuggestionStep: targetStep,
+              },
+            });
+
+            const overrideInstruction = buildJobSuggestionFollowupInstruction(
+              updatedProfile,
+              requestedLabel
+            );
+
+            const reply = await askOpenAI(
+              userId,
+              userMessage,
+              "job_suggestion",
+              overrideInstruction
+            );
+
+            await saveMessage(userId, "assistant", reply);
+            await replyToLine(replyToken, reply);
+            continue;
+          }
+
+          // おすすめ順に開始 or 次へ
+          if (isFollowupRequest(userMessage)) {
+            let targetStep = 0;
+
+            if (isNextRequest(userMessage)) {
+              if (currentStep >= 2) {
+                const reply = `3つの案を一通り見たので、次は以下に進めます。
+
+- 一番気になる案を決める
+- その案向けの職務経歴書を作る
+- 面接対策をする
+
+「職務経歴書」または「面接対策」と送ってください。`;
+
+                await saveMessage(userId, "assistant", reply);
+                await replyToLine(replyToken, reply);
+                continue;
+              }
+
+              targetStep = currentStep + 1;
+            } else {
+              targetStep = currentStep >= 0 ? currentStep : 0;
+            }
+
+            const label = ["A", "B", "C"][targetStep];
+
+            await upsertSession(userId, {
+              current_topic: "job_suggestion",
+              interview_state: {
+                ...interviewState,
+                jobSuggestionStep: targetStep,
+              },
+            });
+
+            const overrideInstruction = buildJobSuggestionFollowupInstruction(
+              updatedProfile,
+              label
+            );
+
+            const reply = await askOpenAI(
+              userId,
+              userMessage,
+              "job_suggestion",
+              overrideInstruction
+            );
+
+            await saveMessage(userId, "assistant", reply);
+            await replyToLine(replyToken, reply);
+            continue;
+          }
+        }
+
         const assistantReply = await askOpenAI(userId, userMessage, activeTopic);
 
         let finalReply = assistantReply;
         const finishedTopic = detectFinishedTopic(userMessage);
+        const isFollowup =
+          activeTopic === "job_suggestion" && isFollowupRequest(userMessage);
 
         if (
           !isFollowup &&
