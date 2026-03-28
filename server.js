@@ -887,6 +887,55 @@ ${JSON.stringify(profile, null, 2)}
 `;
 }
 
+function buildResumeInstruction(profile = {}, summary = "") {
+  return `
+今回は「職務経歴書・経験整理」として回答してください。
+
+ルール：
+- 一般論ではなく、ユーザー向けに具体的に書く
+- profile と summary を必ず使う
+- 求人提案で最後に見ていた案に近い内容で書く
+- そのまま職務経歴書に貼れる形にする
+- LINEで読みやすくする
+- 不明な経歴は断定しない
+- わからない部分は「ここを教えてください」と最後に1〜2個だけ聞く
+
+出力形式：
+
+【職務要約】
+2〜4行
+
+【活かせる経験・強み】
+- ・・・
+- ・・・
+- ・・・
+
+【職務経歴の書き方イメージ】
+会社名：
+役職：
+期間：
+
+- 担当業務
+- 実績
+- 工夫したこと
+
+【この案向けに強調したいポイント】
+- ・・・
+- ・・・
+- ・・・
+
+【次に教えてほしいこと】
+- ・・・
+- ・・・
+
+現在のprofile:
+${JSON.stringify(profile, null, 2)}
+
+現在のsummary:
+${summary}
+`;
+}
+
 function isValidJobSuggestionFormat(text = "") {
   const s = String(text || "");
   return (
@@ -1262,6 +1311,8 @@ async function askOpenAI(userId, userMessage, forcedTopic = null, overrideInstru
     const isJobSuggestionMode =
       isJobSuggestionContext(userMessage) || currentTopic === "job_suggestion";
 
+    const isResumeMode = currentTopic === "resume";
+
     const isFollowup =
       currentTopic === "job_suggestion" && isFollowupRequest(userMessage);
 
@@ -1271,6 +1322,8 @@ async function askOpenAI(userId, userMessage, forcedTopic = null, overrideInstru
         ? buildJobSuggestionFollowupInstruction(profile, "A")
         : isJobSuggestionMode
         ? buildJobSuggestionInstruction(profile)
+        : isResumeMode
+        ? buildResumeInstruction(profile, summary)
         : "");
 
     const messages = [
@@ -1331,6 +1384,7 @@ ${JSON.stringify(profile, null, 2)}
       response.choices?.[0]?.message?.content || "うまく回答を作れませんでした。";
 
     console.log("isJobSuggestionMode =", isJobSuggestionMode);
+    console.log("isResumeMode =", isResumeMode);
     console.log("isFollowup =", isFollowup);
     console.log("jobSuggestionFormatValid(first) =", isValidJobSuggestionFormat(reply));
 
