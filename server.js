@@ -430,11 +430,6 @@ A → B → C
   - 希望勤務地との整合
   - 避けたい環境との相性
 - すべて無理に書かなくてよいが relevant なものは優先して書く
-- 例：
-  ・業界希望のSaaS / 人材と親和性が高い
-  ・年収700万以上を狙いやすいレンジ
-  ・週1出社までの条件と比較的相性が良い
-  ・テレアポ中心や強い詰め管理を避けやすい
 
 応募優先度の理由のルール：
 - 高:
@@ -461,7 +456,7 @@ A → B → C
 - 必ずA/B/Cの順番で出す
 - 1案あたり長くしすぎない
 - LINEで読みやすいように、空行と箇条書きを使う
-- 各案の職種例は、可能なら業界名も入れる（例：SaaS企業の営業企画 / 人材会社の事業企画）
+- 各案の職種例は、可能なら業界名も入れる
 - 取得済み条件は【次に確認したいこと】に書かない
 - 未取得項目がない場合は【次に確認したいこと】を出さない
 - 「一致度」「応募優先度」が1つでも欠けたら不正な出力
@@ -469,6 +464,20 @@ A → B → C
 
 ${buildConditionStatusInstruction(profile)}
 `;
+}
+
+function isValidJobSuggestionFormat(text = "") {
+  const s = String(text || "");
+  return (
+    s.includes("【A. 安定寄り】") &&
+    s.includes("【B. 成長寄り】") &&
+    s.includes("【C. バランス寄り】") &&
+    s.includes("一致度：") &&
+    s.includes("応募優先度：") &&
+    s.includes("一致理由") &&
+    s.includes("応募優先度の理由") &&
+    s.includes("【おすすめ応募順】")
+  );
 }
 
 // ===== Preference Missing-Field Logic =====
@@ -682,7 +691,6 @@ async function upsertSession(userId, patch = {}) {
   if (!supabase) return null;
 
   const existing = await getSession(userId);
-
   const currentProfile = normalizeProfile(existing?.profile || {});
   const mergedProfile = mergeProfile(currentProfile, patch.profile || {});
 
@@ -999,7 +1007,7 @@ avoid_points_in_current_job
 補足：
 - preferred_industries は配列
 - avoid_points_in_current_job は配列
-- minimum_salary はユーザー表現のままでよい（例："500万円以上", "現年収以上"）
+- minimum_salary はユーザー表現のままでよい
 - desired_location は勤務地希望
 - office_attendance は出社頻度
 - 現職の不満や避けたい働き方は avoid_points_in_current_job に入れる
@@ -1155,10 +1163,45 @@ ${JSON.stringify(profile, null, 2)}
     const response = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages,
-      temperature: 0.7,
+      temperature: isJobSuggestionMode ? 0.4 : 0.7,
     });
 
-    return response.choices?.[0]?.message?.content || "うまく回答を作れませんでした。";
+    let reply =
+      response.choices?.[0]?.message?.content || "うまく回答を作れませんでした。";
+
+    console.log("isJobSuggestionMode =", isJobSuggestionMode);
+    console.log("jobSuggestionFormatValid(first) =", isValidJobSuggestionFormat(reply));
+
+    if (isJobSuggestionMode && !isValidJobSuggestionFormat(reply)) {
+      const retryMessages = [
+        ...messages,
+        {
+          role: "assistant",
+          content: reply,
+        },
+        {
+          role: "user",
+          content:
+            "出力形式が不足しています。必ずA/B/Cの3案すべてに「一致度」「応募優先度」「一致理由」「応募優先度の理由」を入れ、最後に【おすすめ応募順】を付けて完全な形式で再出力してください。",
+        },
+      ];
+
+      const retryResponse = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: retryMessages,
+        temperature: 0.2,
+      });
+
+      const retried = retryResponse.choices?.[0]?.message?.content || reply;
+
+      console.log("jobSuggestionFormatValid(retry) =", isValidJobSuggestionFormat(retried));
+
+      if (isValidJobSuggestionFormat(retried)) {
+        reply = retried;
+      }
+    }
+
+    return reply;
   } catch (error) {
     console.error("OpenAI error:", error.response?.data || error.message);
     return "すみません、今ちょっと調子が悪いです。もう一度送ってください。";
