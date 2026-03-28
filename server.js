@@ -559,7 +559,8 @@ function detectRequestedSuggestionLabel(text = "") {
     s === "A" ||
     s.includes("Aが気になる") ||
     s.includes("Aを詳しく") ||
-    s.includes("Aを深掘り")
+    s.includes("Aを深掘り") ||
+    s.includes("A案")
   ) {
     return "A";
   }
@@ -568,7 +569,8 @@ function detectRequestedSuggestionLabel(text = "") {
     s === "B" ||
     s.includes("Bが気になる") ||
     s.includes("Bを詳しく") ||
-    s.includes("Bを深掘り")
+    s.includes("Bを深掘り") ||
+    s.includes("B案")
   ) {
     return "B";
   }
@@ -577,7 +579,8 @@ function detectRequestedSuggestionLabel(text = "") {
     s === "C" ||
     s.includes("Cが気になる") ||
     s.includes("Cを詳しく") ||
-    s.includes("Cを深掘り")
+    s.includes("Cを深掘り") ||
+    s.includes("C案")
   ) {
     return "C";
   }
@@ -2949,14 +2952,6 @@ ${JSON.stringify(profile, null, 2)}
     let reply =
       response.choices?.[0]?.message?.content || "うまく回答を作れませんでした。";
 
-    console.log("isJobSuggestionMode =", isJobSuggestionMode);
-    console.log("isResumeMode =", isResumeMode);
-    console.log("isResumeCompleteMode =", isResumeCompleteMode);
-    console.log("isInterviewMode =", isInterviewMode);
-    console.log("selectedPlan =", selectedPlan);
-    console.log("isFollowup =", isFollowup);
-    console.log("jobSuggestionFormatValid(first) =", isValidJobSuggestionFormat(reply));
-
     if (
       isJobSuggestionMode &&
       !overrideInstruction &&
@@ -2983,8 +2978,6 @@ ${JSON.stringify(profile, null, 2)}
       });
 
       const retried = retryResponse.choices?.[0]?.message?.content || reply;
-
-      console.log("jobSuggestionFormatValid(retry) =", isValidJobSuggestionFormat(retried));
 
       if (isValidJobSuggestionFormat(retried)) {
         reply = retried;
@@ -3029,6 +3022,11 @@ function getStarterReplyByIntent(intent) {
     default:
       return getMainMenuText();
   }
+}
+
+function getSelectedPlanFromState(state = {}) {
+  const normalized = normalizeInterviewState(state);
+  return normalized.selectedPlan || normalized.lastSelectedPlan || null;
 }
 
 // ===== Webhook =====
@@ -3166,8 +3164,13 @@ app.post("/webhook", async (req, res) => {
 
         await saveMessage(userId, "user", userMessage);
         const updatedSession = await updateUserProfile(userId, userMessage);
+        const updatedProfile = normalizeProfile(updatedSession?.profile || {});
+        const currentState = normalizeInterviewState(
+          (await getSession(userId))?.interview_state || beforeInterviewState
+        );
 
         const menuIntent = detectMenuIntent(userMessage);
+        const selectedPlan = getSelectedPlanFromState(currentState);
 
         if (menuIntent === "show_menu") {
           const reply = getMainMenuText();
@@ -3195,6 +3198,118 @@ app.post("/webhook", async (req, res) => {
           continue;
         }
 
+        // ===== A/B/C を明示選択したら保存 =====
+        const requestedLabel = detectRequestedSuggestionLabel(userMessage);
+        if (requestedLabel && (resolvedTopic === "job_suggestion" || sessionBefore?.current_topic === "job_suggestion")) {
+          const stepMap = { A: 0, B: 1, C: 2 };
+
+          await upsertSession(userId, {
+            current_topic: "job_suggestion",
+            interview_state: {
+              ...currentState,
+              jobSuggestionStep: stepMap[requestedLabel],
+              selectedPlan: requestedLabel,
+              lastSelectedPlan: requestedLabel,
+              lastOutputType: "job_suggestion_followup",
+            },
+          });
+
+          const overrideInstruction = buildJobSuggestionFollowupInstruction(
+            updatedProfile,
+            requestedLabel
+          );
+
+          const reply = await askOpenAI(
+            userId,
+            userMessage,
+            "job_suggestion",
+            overrideInstruction
+          );
+
+          await saveMessage(userId, "assistant", reply);
+          await replyToLine(replyToken, reply);
+          continue;
+        }
+
+        // ===== A/B/C 選択後は、職務経歴書を即その案前提で返す =====
+        if (menuIntent === "resume" && selectedPlan) {
+          await upsertSession(userId, {
+            current_topic: "resume",
+            interview_state: {
+              ...currentState,
+              selectedPlan,
+              lastSelectedPlan: selectedPlan,
+              lastOutputType: "resume",
+            },
+          });
+
+          const reply = await askOpenAI(userId, userMessage, "resume");
+
+          await saveMessage(userId, "assistant", reply);
+          await replyToLine(replyToken, reply);
+          continue;
+        }
+
+        // ===== A/B/C 選択後は、完成版も即その案前提で返す =====
+        if (menuIntent === "resume_complete" && selectedPlan) {
+          await upsertSession(userId, {
+            current_topic: "resume_complete",
+            interview_state: {
+              ...currentState,
+              selectedPlan,
+              lastSelectedPlan: selectedPlan,
+              lastOutputType: "resume_complete",
+            },
+          });
+
+          const reply = await askOpenAI(userId, userMessage, "resume_complete");
+
+          await saveMessage(userId, "assistant", reply);
+          await replyToLine(replyToken, reply);
+          continue;
+        }
+
+        // ===== A/B/C 選択後は、面接対策を即その案前提で返す =====
+        if (menuIntent === "interview" && selectedPlan) {
+          await upsertSession(userId, {
+            current_topic: "interview",
+            interview_state: {
+              ...currentState,
+              selectedPlan,
+              lastSelectedPlan: selectedPlan,
+              lastOutputType: "interview",
+            },
+          });
+
+          const reply = await askOpenAI(userId, userMessage, "interview");
+
+          await saveMessage(userId, "assistant", reply);
+          await replyToLine(replyToken, reply);
+          continue;
+        }
+
+        // ===== 面接対策に入った後で「A案/B案/C案」だけ送っても切り替えられるようにする =====
+        if (menuIntent === "interview" || resolvedTopic === "interview") {
+          const planOnly = detectRequestedSuggestionLabel(userMessage);
+          if (planOnly) {
+            await upsertSession(userId, {
+              current_topic: "interview",
+              interview_state: {
+                ...currentState,
+                selectedPlan: planOnly,
+                lastSelectedPlan: planOnly,
+                lastOutputType: "interview",
+              },
+            });
+
+            const reply = await askOpenAI(userId, userMessage, "interview");
+            await saveMessage(userId, "assistant", reply);
+            await replyToLine(replyToken, reply);
+            continue;
+          }
+        }
+
+        // ===== starter reply は selectedPlan がない時だけ =====
         if (
           (menuIntent === "self_analysis" ||
             menuIntent === "job_suggestion" ||
@@ -3206,14 +3321,10 @@ app.post("/webhook", async (req, res) => {
         ) {
           let topicToSave = menuIntent;
 
-          if (menuIntent === "interview") {
-            topicToSave = "interview";
-          }
-
           await upsertSession(userId, {
             current_topic: topicToSave,
             interview_state: {
-              ...(sessionBefore?.interview_state || {}),
+              ...currentState,
             },
           });
 
@@ -3221,14 +3332,10 @@ app.post("/webhook", async (req, res) => {
 
           await saveMessage(userId, "assistant", reply);
           await replyToLine(replyToken, reply);
-
-          console.log("saved current_topic =", topicToSave);
-
           continue;
         }
 
-        const waitingPreferenceKey = beforeInterviewState.last_asked_preference;
-        const updatedProfile = normalizeProfile(updatedSession?.profile || {});
+        const waitingPreferenceKey = currentState.last_asked_preference;
         const activeTopic = resolvedTopic || updatedSession?.current_topic || null;
 
         // ===== 不足条件ヒアリング =====
@@ -3250,7 +3357,7 @@ ${nextQuestion.question}
             await upsertSession(userId, {
               current_topic: "job_suggestion",
               interview_state: {
-                ...beforeInterviewState,
+                ...currentState,
                 pending_preference_questions: nextQuestion.remainingKeys,
                 last_asked_preference: nextQuestion.key,
                 lastOutputType: "job_suggestion_preference_question",
@@ -3264,7 +3371,7 @@ ${nextQuestion.question}
             await upsertSession(userId, {
               current_topic: "job_suggestion",
               interview_state: {
-                ...beforeInterviewState,
+                ...currentState,
                 pending_preference_questions: [],
                 last_asked_preference: null,
                 lastOutputType: "job_suggestion_preference_complete",
@@ -3286,43 +3393,10 @@ ${nextQuestion.question}
         if (activeTopic === "job_suggestion") {
           const sessionNow = await getSession(userId);
           const interviewState = normalizeInterviewState(sessionNow?.interview_state || {});
-          const requestedLabel = detectRequestedSuggestionLabel(userMessage);
           const currentStep =
             typeof interviewState.jobSuggestionStep === "number"
               ? interviewState.jobSuggestionStep
               : -1;
-
-          if (requestedLabel) {
-            const stepMap = { A: 0, B: 1, C: 2 };
-            const targetStep = stepMap[requestedLabel];
-
-            await upsertSession(userId, {
-              current_topic: "job_suggestion",
-              interview_state: {
-                ...interviewState,
-                jobSuggestionStep: targetStep,
-                selectedPlan: requestedLabel,
-                lastSelectedPlan: requestedLabel,
-                lastOutputType: "job_suggestion_followup",
-              },
-            });
-
-            const overrideInstruction = buildJobSuggestionFollowupInstruction(
-              updatedProfile,
-              requestedLabel
-            );
-
-            const reply = await askOpenAI(
-              userId,
-              userMessage,
-              "job_suggestion",
-              overrideInstruction
-            );
-
-            await saveMessage(userId, "assistant", reply);
-            await replyToLine(replyToken, reply);
-            continue;
-          }
 
           if (isFollowupRequest(userMessage)) {
             let targetStep = 0;
@@ -3401,7 +3475,7 @@ ${nextQuestion.question}
             await upsertSession(userId, {
               current_topic: "job_suggestion",
               interview_state: {
-                ...beforeInterviewState,
+                ...currentState,
                 pending_preference_questions: nextQuestion.remainingKeys,
                 last_asked_preference: nextQuestion.key,
                 lastOutputType: "job_suggestion_preference_question",
@@ -3411,7 +3485,7 @@ ${nextQuestion.question}
             await upsertSession(userId, {
               current_topic: "job_suggestion",
               interview_state: {
-                ...beforeInterviewState,
+                ...currentState,
                 pending_preference_questions: [],
                 last_asked_preference: null,
                 lastOutputType: "job_suggestion_main",
