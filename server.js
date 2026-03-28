@@ -471,6 +471,60 @@ function safeParseProfilePatch(content = "") {
   return {};
 }
 
+// ===== Summary Helpers =====
+function sanitizeSummary(text = "") {
+  return String(text || "")
+    .replace(/^```[\s\S]*?```$/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 500);
+}
+
+async function generateUserSummary(profile = {}, existingSummary = "", userMessage = "") {
+  try {
+    const response = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      temperature: 0.2,
+      messages: [
+        {
+          role: "system",
+          content: `
+あなたはキャリアアドバイザーのための要約AIです。
+ユーザーの転職プロフィール要約を、短く自然な日本語で1〜3文にまとめてください。
+
+ルール：
+- 日本語のみ
+- 1〜3文
+- 事実ベース
+- 推測しない
+- 未確定な内容は「〜意向」「〜希望」「〜可能性がある」など柔らかく表現
+- 年収、職種志向、働き方、転職温度感、強み・懸念があれば優先
+- 冗長にしない
+- 400文字以内
+`,
+        },
+        {
+          role: "user",
+          content: `既存summary:
+${existingSummary || "なし"}
+
+現在profile:
+${JSON.stringify(profile, null, 2)}
+
+今回の発話:
+${userMessage}`,
+        },
+      ],
+    });
+
+    const text = response.choices?.[0]?.message?.content || "";
+    return sanitizeSummary(text);
+  } catch (error) {
+    console.error("generateUserSummary error:", error.response?.data || error.message);
+    return sanitizeSummary(existingSummary || "");
+  }
+}
+
 // ===== AI Profile Extraction =====
 async function extractProfilePatchWithAI(userMessage) {
   try {
@@ -534,15 +588,26 @@ change_timing は "high" / "medium" / "low" のいずれか
 async function updateUserProfile(userId, userMessage) {
   const existing = await getSession(userId);
   const existingProfile = existing?.profile || {};
+  const existingSummary = existing?.summary || "";
 
   const newPatch = await extractProfilePatchWithAI(userMessage);
 
-  if (!newPatch || Object.keys(newPatch).length === 0) return;
+  let mergedProfile = existingProfile;
 
-  const mergedProfile = mergeProfile(existingProfile, newPatch);
+  if (newPatch && Object.keys(newPatch).length > 0) {
+    mergedProfile = mergeProfile(existingProfile, newPatch);
+  }
 
+  const nextSummary = await generateUserSummary(
+    mergedProfile,
+    existingSummary,
+    userMessage
+  );
+
+  // 発話からprofileが取れなくてもsummaryは更新する
   await upsertSession(userId, {
     profile: mergedProfile,
+    summary: nextSummary || existingSummary || null,
   });
 }
 
@@ -575,6 +640,7 @@ async function askOpenAI(userId, userMessage) {
     const history = await getRecentMessages(userId, 12);
     const session = await getSession(userId);
     const profile = session?.profile || {};
+    const summary = session?.summary || "";
 
     const messages = [
       {
@@ -586,6 +652,12 @@ async function askOpenAI(userId, userMessage) {
         content:
           "このユーザーの現在プロフィールです。会話に自然に活かしてください。未確定情報は断定せず、確認ベースで扱ってください。\n" +
           JSON.stringify(profile, null, 2),
+      },
+      {
+        role: "system",
+        content:
+          "このユーザーの現在summaryです。自然に参考にしてください。古そう・不確実そうなら確認しながら使ってください。\n" +
+          summary,
       },
       ...history.map((m) => ({
         role: m.role,
