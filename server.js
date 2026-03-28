@@ -796,177 +796,455 @@ function cleanJobSuggestionLead(text = "") {
   return s;
 }
 
-// ===== Conversation History =====
-async function getRecentMessages(userId, limit = 10) {
-  if (!supabase) return [];
-
-  const { data, error } = await supabase
-    .from("line_conversations")
-    .select("role, content, created_at")
-    .eq("user_id", userId)
-    .order("created_at", { ascending: false })
-    .limit(limit);
-
-  if (error) {
-    console.error("Supabase getRecentMessages error:", error.message);
-    return [];
-  }
-
-  return (data || []).reverse();
+// ===== Safe JSON Helpers =====
+function stripCodeFences(text = "") {
+  return String(text || "")
+    .replace(/^```json\s*/i, "")
+    .replace(/^```\s*/i, "")
+    .replace(/\s*```$/i, "")
+    .trim();
 }
 
-async function saveMessage(userId, role, content) {
-  if (!supabase) return;
+function extractFirstJsonObject(text = "") {
+  const s = String(text || "");
+  const start = s.indexOf("{");
+  if (start === -1) return null;
 
-  const { error } = await supabase.from("line_conversations").insert([
-    {
-      user_id: userId,
-      role,
-      content,
-    },
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let i = start; i < s.length; i++) {
+    const ch = s[i];
+
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+
+    if (ch === "\\") {
+      escaped = true;
+      continue;
+    }
+
+    if (ch === '"') {
+      inString = !inString;
+      continue;
+    }
+
+    if (inString) continue;
+
+    if (ch === "{") depth++;
+    if (ch === "}") depth--;
+
+    if (depth === 0) {
+      return s.slice(start, i + 1);
+    }
+  }
+
+  return null;
+}
+
+function sanitizeProfilePatch(raw = {}) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+
+  const allowedKeys = new Set([
+    "experience_keywords",
+    "interest_keywords",
+    "desired_salary_man",
+    "work_style_note",
+    "ng_note",
+    "strength_note",
+    "reason_note",
+    "change_timing",
+    "desired_location",
+    "minimum_salary",
+    "office_attendance",
+    "preferred_industries",
+    "avoid_points_in_current_job",
   ]);
 
-  if (error) {
-    console.error("Supabase saveMessage error:", error.message);
+  const cleaned = {};
+
+  for (const [key, value] of Object.entries(raw)) {
+    if (!allowedKeys.has(key)) continue;
+
+    if (
+      key === "experience_keywords" ||
+      key === "interest_keywords" ||
+      key === "preferred_industries" ||
+      key === "avoid_points_in_current_job"
+    ) {
+      if (Array.isArray(value)) {
+        const arr = value
+          .map((v) => String(v || "").trim())
+          .filter(Boolean)
+          .slice(0, 10);
+        if (arr.length > 0) cleaned[key] = arr;
+      } else {
+        const str = String(value || "").trim();
+        if (str) cleaned[key] = [str.slice(0, 200)];
+      }
+      continue;
+    }
+
+    if (key === "desired_salary_man") {
+      const n = Number(value);
+      if (Number.isFinite(n) && n > 0) {
+        cleaned[key] = Math.round(n);
+      }
+      continue;
+    }
+
+    if (key === "change_timing") {
+      const normalized = String(value || "").trim().toLowerCase();
+      if (["high", "medium", "low"].includes(normalized)) {
+        cleaned[key] = normalized;
+      }
+      continue;
+    }
+
+    const str = String(value || "").trim();
+    if (str) {
+      cleaned[key] = str.slice(0, 500);
+    }
+  }
+
+  return cleaned;
+}
+
+function safeParseProfilePatch(content = "") {
+  const candidates = [
+    String(content || "").trim(),
+    stripCodeFences(content),
+    extractFirstJsonObject(content),
+    extractFirstJsonObject(stripCodeFences(content)),
+  ].filter(Boolean);
+
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(candidate);
+      return sanitizeProfilePatch(parsed);
+    } catch (e) {
+      // continue
+    }
+  }
+
+  return {};
+}
+
+// ===== Summary Helpers =====
+function sanitizeSummary(text = "") {
+  return String(text || "")
+    .replace(/^```[\s\S]*?```$/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 500);
+}
+
+async function generateUserSummary(profile = {}, existingSummary = "", userMessage = "") {
+  try {
+    const response = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      temperature: 0.2,
+      messages: [
+        {
+          role: "system",
+          content: `
+あなたはキャリアアドバイザーのための要約AIです。
+ユーザーの転職プロフィール要約を、短く自然な日本語で1〜3文にまとめてください。
+
+ルール：
+- 日本語のみ
+- 1〜3文
+- 事実ベース
+- 推測しない
+- 未確定な内容は「〜意向」「〜希望」「〜可能性がある」など柔らかく表現
+- 年収、職種志向、働き方、転職温度感、強み・懸念があれば優先
+- 冗長にしない
+- 400文字以内
+`,
+        },
+        {
+          role: "user",
+          content: `既存summary:
+${existingSummary || "なし"}
+
+現在profile:
+${JSON.stringify(profile, null, 2)}
+
+今回の発話:
+${userMessage}`,
+        },
+      ],
+    });
+
+    const text = response.choices?.[0]?.message?.content || "";
+    return sanitizeSummary(text);
+  } catch (error) {
+    console.error("generateUserSummary error:", error.response?.data || error.message);
+    return sanitizeSummary(existingSummary || "");
   }
 }
 
-// ===== Session / Profile =====
-async function getSession(userId) {
-  if (!supabase) return null;
+// ===== AI Profile Extraction =====
+async function extractProfilePatchWithAI(userMessage) {
+  try {
+    const response = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      temperature: 0,
+      messages: [
+        {
+          role: "system",
+          content: `
+あなたはキャリアアドバイザー向けの情報抽出AIです。
+ユーザーの発話から、転職プロフィールとして保存すべき情報だけをJSONで抽出してください。
 
-  const { data, error } = await supabase
-    .from("line_ca_sessions")
-    .select("*")
-    .eq("user_id", userId)
-    .maybeSingle();
+出力ルール：
+- 必ずJSONオブジェクトのみを返す
+- コードブロックは使わない
+- 情報がない項目は出さない
+- 推測しない
+- 配列は文字列配列
+- 年収は「万円」の整数で返す
+- 日本語で返す
 
-  if (error) {
-    console.error("Supabase getSession error:", error.message);
-    return null;
+使ってよいキー：
+experience_keywords
+interest_keywords
+desired_salary_man
+work_style_note
+ng_note
+strength_note
+reason_note
+change_timing
+desired_location
+minimum_salary
+office_attendance
+preferred_industries
+avoid_points_in_current_job
+
+補足：
+- preferred_industries は配列
+- avoid_points_in_current_job は配列
+- minimum_salary はユーザー表現のままでよい
+- desired_location は勤務地希望
+- office_attendance は出社頻度
+- 現職の不満や避けたい働き方は avoid_points_in_current_job に入れる
+
+change_timing は "high" / "medium" / "low" のいずれか
+`,
+        },
+        {
+          role: "user",
+          content: userMessage,
+        },
+      ],
+    });
+
+    const content = response.choices?.[0]?.message?.content || "{}";
+    const parsed = safeParseProfilePatch(content);
+
+    if (!parsed || Object.keys(parsed).length === 0) {
+      console.warn("Profile patch parse failed. raw content:", content);
+      return {};
+    }
+
+    return parsed;
+  } catch (error) {
+    console.error(
+      "extractProfilePatchWithAI error:",
+      error.response?.data || error.message
+    );
+    return {};
   }
-
-  if (!data) return null;
-  return {
-    ...data,
-    profile: normalizeProfile(data.profile || {}),
-    interview_state: normalizeInterviewState(data.interview_state || {}),
-    current_topic: data.current_topic || null,
-  };
 }
 
-async function upsertSession(userId, patch = {}) {
-  if (!supabase) return null;
-
+async function updateUserProfile(userId, userMessage) {
   const existing = await getSession(userId);
-  const currentProfile = normalizeProfile(existing?.profile || {});
-  const mergedProfile = mergeProfile(currentProfile, patch.profile || {});
+  const existingProfile = normalizeProfile(existing?.profile || {});
+  const existingSummary = existing?.summary || "";
 
-  const payload = {
-    user_id: userId,
+  const newPatch = await extractProfilePatchWithAI(userMessage);
+
+  let mergedProfile = existingProfile;
+
+  if (newPatch && Object.keys(newPatch).length > 0) {
+    mergedProfile = mergeProfile(existingProfile, newPatch);
+  }
+
+  const nextSummary = await generateUserSummary(
+    mergedProfile,
+    existingSummary,
+    userMessage
+  );
+
+  const updatedSession = await upsertSession(userId, {
     profile: mergedProfile,
-    summary: patch.summary ?? existing?.summary ?? null,
-    interview_state:
-      patch.interview_state !== undefined
-        ? patch.interview_state
-        : existing?.interview_state ?? null,
-    current_topic:
-      patch.current_topic !== undefined
-        ? patch.current_topic
-        : existing?.current_topic ?? null,
-    plan_type: patch.plan_type ?? existing?.plan_type ?? "free",
-    usage_count:
-      typeof patch.usage_count === "number"
-        ? patch.usage_count
-        : existing?.usage_count ?? 0,
-    updated_at: new Date().toISOString(),
-  };
+    summary: nextSummary || existingSummary || null,
+  });
 
-  const { data, error } = await supabase
-    .from("line_ca_sessions")
-    .upsert(payload, { onConflict: "user_id" })
-    .select()
-    .single();
-
-  if (error) {
-    console.error("Supabase upsertSession error:", error.message);
-    return null;
-  }
-
-  return {
-    ...data,
-    profile: normalizeProfile(data.profile || {}),
-    interview_state: normalizeInterviewState(data.interview_state || {}),
-    current_topic: data.current_topic || null,
+  return updatedSession || {
+    profile: mergedProfile,
+    summary: nextSummary || existingSummary || "",
+    interview_state: existing?.interview_state || {},
+    current_topic: existing?.current_topic || null,
   };
 }
 
-function mergeUniqueStringArray(oldArr = [], newArr = []) {
-  return [...new Set([...(oldArr || []), ...(newArr || [])])];
+// ===== OpenAI Ask =====
+async function askOpenAI(userId, userMessage, forcedTopic = null, overrideInstruction = "") {
+  try {
+    const history = await getRecentMessages(userId, 12);
+    const session = await getSession(userId);
+    const profile = normalizeProfile(session?.profile || {});
+    const summary = session?.summary || "";
+    const currentTopic = forcedTopic || session?.current_topic || null;
+
+    const isJobSuggestionMode =
+      isJobSuggestionContext(userMessage) || currentTopic === "job_suggestion";
+
+    const isFollowup =
+      currentTopic === "job_suggestion" && isFollowupRequest(userMessage);
+
+    const extraInstructions =
+      overrideInstruction ||
+      (isJobSuggestionMode && isFollowup
+        ? buildJobSuggestionFollowupInstruction(profile, "A")
+        : isJobSuggestionMode
+        ? buildJobSuggestionInstruction(profile)
+        : "");
+
+    const messages = [
+      {
+        role: "system",
+        content: SYSTEM_PROMPT,
+      },
+      {
+        role: "system",
+        content: `
+このユーザーの現在プロフィールです。
+求人提案では必ずこの内容を優先して反映してください。
+
+profile:
+${JSON.stringify(profile, null, 2)}
+
+特に以下は最優先です：
+- preferred_industries
+- desired_location
+- minimum_salary
+- office_attendance
+- avoid_points_in_current_job
+
+未確定情報は断定せず、確認ベースで扱ってください。
+`,
+      },
+      {
+        role: "system",
+        content:
+          "このユーザーの現在summaryです。自然に参考にしてください。古そう・不確実そうなら確認しながら使ってください。\n" +
+          summary,
+      },
+      ...(currentTopic
+        ? [
+            {
+              role: "system",
+              content: `現在の会話テーマは「${currentTopic}」です。短い継続メッセージ（例: お願いします、次、続けて）はこのテーマの続きとして扱ってください。`,
+            },
+          ]
+        : []),
+      ...(extraInstructions
+        ? [{ role: "system", content: extraInstructions }]
+        : []),
+      ...history.map((m) => ({
+        role: m.role,
+        content: m.content,
+      })),
+      { role: "user", content: userMessage },
+    ];
+
+    const response = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages,
+      temperature: isJobSuggestionMode ? 0.4 : 0.7,
+    });
+
+    let reply =
+      response.choices?.[0]?.message?.content || "うまく回答を作れませんでした。";
+
+    console.log("isJobSuggestionMode =", isJobSuggestionMode);
+    console.log("isFollowup =", isFollowup);
+    console.log("jobSuggestionFormatValid(first) =", isValidJobSuggestionFormat(reply));
+
+    if (
+      isJobSuggestionMode &&
+      !overrideInstruction &&
+      !isFollowup &&
+      !isValidJobSuggestionFormat(reply)
+    ) {
+      const retryMessages = [
+        ...messages,
+        {
+          role: "assistant",
+          content: reply,
+        },
+        {
+          role: "user",
+          content:
+            "出力形式が不足しています。謝罪文・言い訳・「再度」などの前置きは書かず、自然な導入文は「ありがとうございます！あなたの希望条件に基づいて、以下の求人提案を考えてみました。」のみ許可します。必ずA/B/Cの3案すべてに「一致度」「応募優先度」「一致理由」「応募優先度の理由」「懸念点」を入れ、最後に【おすすめ応募順】を付けて完全な形式で再出力してください。",
+        },
+      ];
+
+      const retryResponse = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: retryMessages,
+        temperature: 0.2,
+      });
+
+      const retried = retryResponse.choices?.[0]?.message?.content || reply;
+
+      console.log("jobSuggestionFormatValid(retry) =", isValidJobSuggestionFormat(retried));
+
+      if (isValidJobSuggestionFormat(retried)) {
+        reply = retried;
+      }
+    }
+
+    if (isJobSuggestionMode && !overrideInstruction && !isFollowup) {
+      reply = cleanJobSuggestionLead(reply);
+    }
+
+    return reply;
+  } catch (error) {
+    console.error("OpenAI error:", error.response?.data || error.message);
+    return "すみません、今ちょっと調子が悪いです。もう一度送ってください。";
+  }
 }
 
-function mergeProfile(existingProfile = {}, newPatch = {}) {
-  const base = normalizeProfile(existingProfile);
+async function generateAutoRefinedJobSuggestion(userId) {
+  const autoPrompt =
+    "保存済みの条件がそろったので、現在のプロフィールを前提に改めて求人提案してください。A/B/Cの3パターンで、より条件に沿って具体的に提案してください。未取得項目がなければ【次に確認したいこと】は出さないでください。各案に一致度と応募優先度を必ずつけてください。";
 
-  const merged = {
-    ...base,
-    ...newPatch,
-  };
-
-  if (base.experience_keywords || newPatch.experience_keywords) {
-    merged.experience_keywords = mergeUniqueStringArray(
-      base.experience_keywords || [],
-      newPatch.experience_keywords || []
-    );
-  }
-
-  if (base.interest_keywords || newPatch.interest_keywords) {
-    merged.interest_keywords = mergeUniqueStringArray(
-      base.interest_keywords || [],
-      newPatch.interest_keywords || []
-    );
-  }
-
-  if (base.preferred_industries || newPatch.preferred_industries) {
-    merged.preferred_industries = mergeUniqueStringArray(
-      base.preferred_industries || [],
-      newPatch.preferred_industries || []
-    );
-  }
-
-  if (base.avoid_points_in_current_job || newPatch.avoid_points_in_current_job) {
-    merged.avoid_points_in_current_job = mergeUniqueStringArray(
-      base.avoid_points_in_current_job || [],
-      newPatch.avoid_points_in_current_job || []
-    );
-  }
-
-  return normalizeProfile(merged);
+  return await askOpenAI(userId, autoPrompt, "job_suggestion");
 }
 
-// ===== System Prompt =====
-const SYSTEM_PROMPT = `
-あなたは優秀なキャリアアドバイザーです。
-ユーザーに対して、自然で親しみやすく、でも実務的に役立つ回答をしてください。
-
-対応できること：
-- 自己分析
-- 求人提案
-- 職務経歴書・経験整理
-- 面接対策
-- キャリア相談
-
-共通ルール：
-- 会話の途中でテーマが変わっても自然に対応する
-- ユーザーが迷っていそうなら、今できることを短く案内する
-- 「求人検索」ではなく「求人提案」という表現を使う
-- 回答はLINEで読みやすい長さと改行を意識する
-- 上から目線にならない
-- 不明点は決めつけず、確認ベースで伝える
-- できるだけ次の一歩が明確になるように返す
-- 保存済みプロフィールは自然に活かすが、未確定情報として扱う
-- 求人提案では、保存済みの希望勤務地・年収下限・出社頻度・業界希望・避けたいことがあれば優先して反映する
-`;
+// ===== Topic Starter Replies =====
+function getStarterReplyByIntent(intent) {
+  switch (intent) {
+    case "self_analysis":
+      return "自己分析ですね。これまでの経験・得意なこと・やりたくないことを、わかる範囲で教えてください。";
+    case "job_suggestion":
+      return "求人提案ですね。希望職種、年収、勤務地、業界、働き方など、わかる範囲で教えてください。";
+    case "resume":
+      return "職務経歴書・経験整理ですね。これまでの職歴、担当業務、実績をわかる範囲で送ってください。";
+    case "interview":
+      return "面接対策ですね。受ける職種や企業、想定される質問があれば送ってください。";
+    case "career":
+      return "キャリア相談ですね。今の悩み、転職したい理由、迷っていることをそのまま送ってください。";
+    default:
+      return getMainMenuText();
+  }
+}
 
 // ===== Webhook =====
 app.post("/webhook", async (req, res) => {
@@ -1090,7 +1368,6 @@ app.post("/webhook", async (req, res) => {
               ? interviewState.jobSuggestionStep
               : -1;
 
-          // A/B/C 指名
           if (requestedLabel) {
             const stepMap = { A: 0, B: 1, C: 2 };
             const targetStep = stepMap[requestedLabel];
@@ -1120,7 +1397,6 @@ app.post("/webhook", async (req, res) => {
             continue;
           }
 
-          // おすすめ順に開始 or 次へ
           if (isFollowupRequest(userMessage)) {
             let targetStep = 0;
 
