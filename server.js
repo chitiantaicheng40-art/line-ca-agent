@@ -661,13 +661,19 @@ function normalizeInterviewState(interviewState = {}) {
     selectedPlan: ["A", "B", "C"].includes(interviewState.selectedPlan)
       ? interviewState.selectedPlan
       : null,
+    lastSelectedPlan: ["A", "B", "C"].includes(interviewState.lastSelectedPlan)
+      ? interviewState.lastSelectedPlan
+      : null,
+    lastOutputType: interviewState.lastOutputType || null,
+    lastCompanyTemplate: interviewState.lastCompanyTemplate || null,
+    lastQuestion: interviewState.lastQuestion || null,
 
     mode: interviewState.mode || null,
     startedAt: interviewState.startedAt || null,
     type: interviewState.type || "common",
     strictness: interviewState.strictness || "normal",
-    companyTemplate: interviewState.companyTemplate || null, // built-in key
-    companyTemplateName: interviewState.companyTemplateName || null, // custom name
+    companyTemplate: interviewState.companyTemplate || null,
+    companyTemplateName: interviewState.companyTemplateName || null,
     questionIndex:
       typeof interviewState.questionIndex === "number"
         ? interviewState.questionIndex
@@ -1148,7 +1154,8 @@ async function startMockInterview(
   userMessage = ""
 ) {
   const currentState = normalizeInterviewState(sessionBefore?.interview_state || {});
-  const { type, strictness, companyTemplate } = getMockInterviewTypeAndStrictness(userMessage);
+  const { type, strictness, companyTemplate } =
+    getMockInterviewTypeAndStrictness(userMessage);
 
   const customTemplateName =
     !companyTemplate && currentState.companyTemplateName
@@ -1160,6 +1167,8 @@ async function startMockInterview(
     ...getDefaultMockInterviewState(type, strictness),
     companyTemplate: companyTemplate || null,
     companyTemplateName: customTemplateName,
+    lastOutputType: "mock_interview_start",
+    lastCompanyTemplate: companyTemplate || customTemplateName || null,
   };
 
   const questions = getQuestionsFromInterviewState(newState, sessionBefore);
@@ -1666,6 +1675,7 @@ async function handleMockInterviewAnswer(
       ...interviewState,
       mode: null,
       isFinished: true,
+      lastOutputType: "mock_interview_end",
     };
 
     await upsertSession(userId, {
@@ -1721,6 +1731,8 @@ ${getNextActionMenuByTopic("mock_interview")}`;
       answers: nextAnswers,
       feedbacks: nextFeedbacks,
       isFinished: true,
+      lastQuestion: currentQuestion,
+      lastOutputType: "mock_interview_final",
     };
 
     const finalReview = await generateMockInterviewFinalReview(
@@ -1765,6 +1777,8 @@ ${getNextActionMenuByTopic("mock_interview")}`;
     answers: nextAnswers,
     feedbacks: nextFeedbacks,
     isFinished: false,
+    lastQuestion: currentQuestion,
+    lastOutputType: "mock_interview_feedback",
   };
 
   await upsertSession(userId, {
@@ -1839,6 +1853,7 @@ async function handleResumeMockInterview(userId, replyToken, session) {
       ...restoredState,
       mode: "mock_interview",
       isFinished: false,
+      lastOutputType: "mock_interview_resume",
     },
   });
 
@@ -1946,6 +1961,8 @@ async function handleCompanyTemplateSelect(userId, replyToken, session, template
       ...(session?.interview_state || {}),
       companyTemplate: null,
       companyTemplateName: templateName,
+      lastCompanyTemplate: templateName,
+      lastOutputType: "company_template_select",
     },
   });
 
@@ -2008,6 +2025,7 @@ async function handleCompanyTemplateDeleteExecute(
         session?.interview_state?.companyTemplateName === companyName
           ? null
           : session?.interview_state?.companyTemplateName || null,
+      lastOutputType: "company_template_delete",
     },
   });
 
@@ -2854,7 +2872,8 @@ async function askOpenAI(userId, userMessage, forcedTopic = null, overrideInstru
     const isInterviewMode = currentTopic === "interview";
 
     const sessionInterviewState = normalizeInterviewState(session?.interview_state || {});
-    const selectedPlan = sessionInterviewState.selectedPlan || null;
+    const selectedPlan =
+      sessionInterviewState.selectedPlan || sessionInterviewState.lastSelectedPlan || null;
 
     const isFollowup =
       currentTopic === "job_suggestion" && isFollowupRequest(userMessage);
@@ -3234,6 +3253,7 @@ ${nextQuestion.question}
                 ...beforeInterviewState,
                 pending_preference_questions: nextQuestion.remainingKeys,
                 last_asked_preference: nextQuestion.key,
+                lastOutputType: "job_suggestion_preference_question",
               },
             });
 
@@ -3247,6 +3267,7 @@ ${nextQuestion.question}
                 ...beforeInterviewState,
                 pending_preference_questions: [],
                 last_asked_preference: null,
+                lastOutputType: "job_suggestion_preference_complete",
               },
             });
 
@@ -3281,6 +3302,8 @@ ${nextQuestion.question}
                 ...interviewState,
                 jobSuggestionStep: targetStep,
                 selectedPlan: requestedLabel,
+                lastSelectedPlan: requestedLabel,
+                lastOutputType: "job_suggestion_followup",
               },
             });
 
@@ -3332,6 +3355,9 @@ ${nextQuestion.question}
               interview_state: {
                 ...interviewState,
                 jobSuggestionStep: targetStep,
+                selectedPlan: label,
+                lastSelectedPlan: label,
+                lastOutputType: "job_suggestion_followup",
               },
             });
 
@@ -3378,6 +3404,7 @@ ${nextQuestion.question}
                 ...beforeInterviewState,
                 pending_preference_questions: nextQuestion.remainingKeys,
                 last_asked_preference: nextQuestion.key,
+                lastOutputType: "job_suggestion_preference_question",
               },
             });
           } else if (activeTopic === "job_suggestion") {
@@ -3387,6 +3414,7 @@ ${nextQuestion.question}
                 ...beforeInterviewState,
                 pending_preference_questions: [],
                 last_asked_preference: null,
+                lastOutputType: "job_suggestion_main",
               },
             });
           }
