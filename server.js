@@ -338,6 +338,22 @@ function isJobSuggestionContext(text = "") {
   );
 }
 
+function isFollowupRequest(text = "") {
+  const s = String(text || "").trim();
+  return [
+    "お願いします",
+    "お願い",
+    "次",
+    "続けて",
+    "続き",
+    "もっと詳しく",
+    "詳しく",
+    "具体的に",
+    "深掘り",
+    "もっと",
+  ].includes(s);
+}
+
 function buildConditionStatusInstruction(profile = {}) {
   const p = normalizeProfile(profile);
 
@@ -421,7 +437,6 @@ function buildJobSuggestionInstruction(profile = {}) {
 
 【おすすめ応募順】
 A → B → C
-のように、最もおすすめの順で並べる
 
 最後は必要な場合のみ
 【次に確認したいこと】
@@ -470,6 +485,68 @@ A → B → C
 - 省略表現を使わず、A/B/Cすべてに完全な項目を入れる
 
 ${buildConditionStatusInstruction(profile)}
+`;
+}
+
+function buildJobSuggestionFollowupInstruction(profile = {}) {
+  return `
+今回は「求人提案の深掘り」です。
+ユーザーは直前のA/B/C提案を見た上で、「お願いします」「次」「もっと詳しく」などの継続メッセージを送っています。
+
+重要ルール：
+- 前回のA/B/C提案全文を繰り返さない
+- 謝罪文は書かない
+- 冒頭は自然に
+- 応募優先度が高い案から1つだけ深掘りする
+- 既に深掘り済みかどうかは履歴を見て、できるだけ同じ深掘りを繰り返さない
+- まだ深掘りされていなさそうな案を優先する
+- profile にない事実は断定しない
+- ユーザーが明示していない経験は断定しない
+- 「〜経験を活かせる」と言い切れない場合は、「〜志向と親和性が高い」「〜に挑戦しやすい」と表現する
+- LINEで読みやすくする
+- 3案全部を再掲しない
+
+出力フォーマット：
+ありがとうございます。今回は、前回の提案の中から最も優先度が高い案を1つ深掘りします。
+
+【今回深掘りする案】
+A / B / C のいずれか
+
+【向いている人】
+- ・・・
+- ・・・
+
+【想定される仕事内容】
+- ・・・
+- ・・・
+
+【年収レンジの目安】
+- ・・・
+
+【この人が通過しやすい理由】
+- ・・・
+- ・・・
+
+【落ちやすいポイント】
+- ・・・
+- ・・・
+
+【受けるなら狙い目の企業イメージ】
+- ・・・
+- ・・・
+
+【次のおすすめアクション】
+- 求人の深掘りを続ける
+- 職務経歴書整理に進む
+- 面接対策に進む
+
+補足：
+- Aが最優先なら、まずAを深掘りする
+- 次に「次」と来たらB、その次はC、のように履歴を見てなるべく重複を避ける
+- profile の希望勤務地、年収、出社頻度、業界希望、避けたいことを必ず反映する
+
+現在のプロフィール:
+${JSON.stringify(profile, null, 2)}
 `;
 }
 
@@ -528,621 +605,15 @@ function cleanJobSuggestionLead(text = "") {
   return s;
 }
 
-// ===== Preference Missing-Field Logic =====
-const REQUIRED_PREFERENCE_FIELDS = [
-  {
-    key: "desired_location",
-    label: "希望勤務地",
-    question:
-      "希望勤務地を教えてください。（例：東京23区、大阪市、福岡市、フルリモート希望 など）",
-  },
-  {
-    key: "minimum_salary",
-    label: "許容年収下限",
-    question:
-      "許容年収の下限を教えてください。（例：500万円以上、現年収以上 など）",
-  },
-  {
-    key: "office_attendance",
-    label: "出社頻度",
-    question:
-      "希望する出社頻度を教えてください。（例：フル出社、週3出社、週1出社、フルリモート など）",
-  },
-  {
-    key: "preferred_industries",
-    label: "業界希望",
-    question:
-      "興味のある業界があれば教えてください。（例：IT、人材、SaaS、メーカー など）",
-  },
-  {
-    key: "avoid_points_in_current_job",
-    label: "現職で避けたいこと",
-    question:
-      "次の転職先で避けたいことを教えてください。（例：長時間労働、トップダウン、転勤が多い、テレアポ中心 など）",
-  },
-];
-
-function normalizeProfile(profile = {}) {
-  return {
-    experience_keywords: Array.isArray(profile.experience_keywords)
-      ? profile.experience_keywords
-      : [],
-    interest_keywords: Array.isArray(profile.interest_keywords)
-      ? profile.interest_keywords
-      : [],
-    desired_location: profile.desired_location || "",
-    minimum_salary: profile.minimum_salary || "",
-    office_attendance: profile.office_attendance || "",
-    preferred_industries: Array.isArray(profile.preferred_industries)
-      ? profile.preferred_industries
-      : profile.preferred_industries
-      ? [String(profile.preferred_industries)]
-      : [],
-    avoid_points_in_current_job: Array.isArray(profile.avoid_points_in_current_job)
-      ? profile.avoid_points_in_current_job
-      : profile.avoid_points_in_current_job
-      ? [String(profile.avoid_points_in_current_job)]
-      : [],
-    ...profile,
-  };
-}
-
-function normalizeInterviewState(interviewState = {}) {
-  return {
-    pending_preference_questions: Array.isArray(
-      interviewState.pending_preference_questions
-    )
-      ? interviewState.pending_preference_questions
-      : [],
-    last_asked_preference: interviewState.last_asked_preference || null,
-    ...interviewState,
-  };
-}
-
-function isFieldFilled(value) {
-  if (Array.isArray(value)) {
-    return value.map((v) => String(v || "").trim()).filter(Boolean).length > 0;
-  }
-  return value !== undefined && value !== null && String(value).trim() !== "";
-}
-
-function getMissingPreferenceFields(profile = {}) {
-  const normalized = normalizeProfile(profile);
-  return REQUIRED_PREFERENCE_FIELDS.filter(
-    (item) => !isFieldFilled(normalized[item.key])
-  );
-}
-
-function getNextMissingPreferenceQuestion(profile = {}) {
-  const missing = getMissingPreferenceFields(profile);
-  if (missing.length === 0) return null;
-
-  return {
-    key: missing[0].key,
-    label: missing[0].label,
-    question: missing[0].question,
-    remainingKeys: missing.map((item) => item.key),
-  };
-}
-
-function buildSingleMissingQuestionMessage(profile = {}) {
-  const next = getNextMissingPreferenceQuestion(profile);
-  if (!next) return "";
-
-  return `\n\n---\nよりマッチ度の高い求人に絞るため、まずは1点だけ教えてください。\n${next.question}\n回答できる範囲で大丈夫です。`;
-}
-
-function isLikelySimplePreferenceAnswer(userMessage = "") {
-  const t = (userMessage || "").trim();
-  if (!t) return false;
-  if (detectMenuIntent(t)) return false;
-  if (isJobSuggestionContext(t)) return false;
-
-  const longQuestionHints = [
-    "どう思う",
-    "相談",
-    "提案",
-    "面接",
-    "職務経歴書",
-    "自己分析",
-    "キャリア",
-  ];
-
-  if (longQuestionHints.some((w) => t.includes(w))) return false;
-  if (t.length > 100) return false;
-
-  return true;
-}
-
-function shouldAskMissingPreferences(aiReply = "", currentTopic = "") {
-  const text = String(aiReply || "");
-
-  const proposalHints = [
-    "求人",
-    "職種例",
-    "おすすめ理由",
-    "合う点",
-    "懸念点",
-    "安定寄り",
-    "成長寄り",
-    "バランス寄り",
-    "ポジション",
-    "ご提案",
-    "一致度",
-    "応募優先度",
-  ];
-
-  if (currentTopic === "job_suggestion") return true;
-  return proposalHints.some((word) => text.includes(word));
-}
-
-// ===== Conversation History =====
-async function getRecentMessages(userId, limit = 10) {
-  if (!supabase) return [];
-
-  const { data, error } = await supabase
-    .from("line_conversations")
-    .select("role, content, created_at")
-    .eq("user_id", userId)
-    .order("created_at", { ascending: false })
-    .limit(limit);
-
-  if (error) {
-    console.error("Supabase getRecentMessages error:", error.message);
-    return [];
-  }
-
-  return (data || []).reverse();
-}
-
-async function saveMessage(userId, role, content) {
-  if (!supabase) return;
-
-  const { error } = await supabase.from("line_conversations").insert([
-    {
-      user_id: userId,
-      role,
-      content,
-    },
-  ]);
-
-  if (error) {
-    console.error("Supabase saveMessage error:", error.message);
-  }
-}
-
-// ===== Session / Profile =====
-async function getSession(userId) {
-  if (!supabase) return null;
-
-  const { data, error } = await supabase
-    .from("line_ca_sessions")
-    .select("*")
-    .eq("user_id", userId)
-    .maybeSingle();
-
-  if (error) {
-    console.error("Supabase getSession error:", error.message);
-    return null;
-  }
-
-  if (!data) return null;
-  return {
-    ...data,
-    profile: normalizeProfile(data.profile || {}),
-    interview_state: normalizeInterviewState(data.interview_state || {}),
-    current_topic: data.current_topic || null,
-  };
-}
-
-async function upsertSession(userId, patch = {}) {
-  if (!supabase) return null;
-
-  const existing = await getSession(userId);
-  const currentProfile = normalizeProfile(existing?.profile || {});
-  const mergedProfile = mergeProfile(currentProfile, patch.profile || {});
-
-  const payload = {
-    user_id: userId,
-    profile: mergedProfile,
-    summary: patch.summary ?? existing?.summary ?? null,
-    interview_state:
-      patch.interview_state !== undefined
-        ? patch.interview_state
-        : existing?.interview_state ?? null,
-    current_topic:
-      patch.current_topic !== undefined
-        ? patch.current_topic
-        : existing?.current_topic ?? null,
-    plan_type: patch.plan_type ?? existing?.plan_type ?? "free",
-    usage_count:
-      typeof patch.usage_count === "number"
-        ? patch.usage_count
-        : existing?.usage_count ?? 0,
-    updated_at: new Date().toISOString(),
-  };
-
-  const { data, error } = await supabase
-    .from("line_ca_sessions")
-    .upsert(payload, { onConflict: "user_id" })
-    .select()
-    .single();
-
-  if (error) {
-    console.error("Supabase upsertSession error:", error.message);
-    return null;
-  }
-
-  return {
-    ...data,
-    profile: normalizeProfile(data.profile || {}),
-    interview_state: normalizeInterviewState(data.interview_state || {}),
-    current_topic: data.current_topic || null,
-  };
-}
-
-function mergeUniqueStringArray(oldArr = [], newArr = []) {
-  return [...new Set([...(oldArr || []), ...(newArr || [])])];
-}
-
-function mergeProfile(existingProfile = {}, newPatch = {}) {
-  const base = normalizeProfile(existingProfile);
-
-  const merged = {
-    ...base,
-    ...newPatch,
-  };
-
-  if (base.experience_keywords || newPatch.experience_keywords) {
-    merged.experience_keywords = mergeUniqueStringArray(
-      base.experience_keywords || [],
-      newPatch.experience_keywords || []
-    );
-  }
-
-  if (base.interest_keywords || newPatch.interest_keywords) {
-    merged.interest_keywords = mergeUniqueStringArray(
-      base.interest_keywords || [],
-      newPatch.interest_keywords || []
-    );
-  }
-
-  if (base.preferred_industries || newPatch.preferred_industries) {
-    merged.preferred_industries = mergeUniqueStringArray(
-      base.preferred_industries || [],
-      newPatch.preferred_industries || []
-    );
-  }
-
-  if (base.avoid_points_in_current_job || newPatch.avoid_points_in_current_job) {
-    merged.avoid_points_in_current_job = mergeUniqueStringArray(
-      base.avoid_points_in_current_job || [],
-      newPatch.avoid_points_in_current_job || []
-    );
-  }
-
-  return normalizeProfile(merged);
-}
-
-// ===== Safe JSON Helpers =====
-function stripCodeFences(text = "") {
-  return String(text || "")
-    .replace(/^```json\s*/i, "")
-    .replace(/^```\s*/i, "")
-    .replace(/\s*```$/i, "")
-    .trim();
-}
-
-function extractFirstJsonObject(text = "") {
+// ===== Conversation History Helpers =====
+function hasDeepDiveStructure(text = "") {
   const s = String(text || "");
-  const start = s.indexOf("{");
-  if (start === -1) return null;
-
-  let depth = 0;
-  let inString = false;
-  let escaped = false;
-
-  for (let i = start; i < s.length; i++) {
-    const ch = s[i];
-
-    if (escaped) {
-      escaped = false;
-      continue;
-    }
-
-    if (ch === "\\") {
-      escaped = true;
-      continue;
-    }
-
-    if (ch === '"') {
-      inString = !inString;
-      continue;
-    }
-
-    if (inString) continue;
-
-    if (ch === "{") depth++;
-    if (ch === "}") depth--;
-
-    if (depth === 0) {
-      return s.slice(start, i + 1);
-    }
-  }
-
-  return null;
-}
-
-function sanitizeProfilePatch(raw = {}) {
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
-
-  const allowedKeys = new Set([
-    "experience_keywords",
-    "interest_keywords",
-    "desired_salary_man",
-    "work_style_note",
-    "ng_note",
-    "strength_note",
-    "reason_note",
-    "change_timing",
-    "desired_location",
-    "minimum_salary",
-    "office_attendance",
-    "preferred_industries",
-    "avoid_points_in_current_job",
-  ]);
-
-  const cleaned = {};
-
-  for (const [key, value] of Object.entries(raw)) {
-    if (!allowedKeys.has(key)) continue;
-
-    if (
-      key === "experience_keywords" ||
-      key === "interest_keywords" ||
-      key === "preferred_industries" ||
-      key === "avoid_points_in_current_job"
-    ) {
-      if (Array.isArray(value)) {
-        const arr = value
-          .map((v) => String(v || "").trim())
-          .filter(Boolean)
-          .slice(0, 10);
-        if (arr.length > 0) cleaned[key] = arr;
-      } else {
-        const str = String(value || "").trim();
-        if (str) cleaned[key] = [str.slice(0, 200)];
-      }
-      continue;
-    }
-
-    if (key === "desired_salary_man") {
-      const n = Number(value);
-      if (Number.isFinite(n) && n > 0) {
-        cleaned[key] = Math.round(n);
-      }
-      continue;
-    }
-
-    if (key === "change_timing") {
-      const normalized = String(value || "").trim().toLowerCase();
-      if (["high", "medium", "low"].includes(normalized)) {
-        cleaned[key] = normalized;
-      }
-      continue;
-    }
-
-    const str = String(value || "").trim();
-    if (str) {
-      cleaned[key] = str.slice(0, 500);
-    }
-  }
-
-  return cleaned;
-}
-
-function safeParseProfilePatch(content = "") {
-  const candidates = [
-    String(content || "").trim(),
-    stripCodeFences(content),
-    extractFirstJsonObject(content),
-    extractFirstJsonObject(stripCodeFences(content)),
-  ].filter(Boolean);
-
-  for (const candidate of candidates) {
-    try {
-      const parsed = JSON.parse(candidate);
-      return sanitizeProfilePatch(parsed);
-    } catch (e) {
-      // continue
-    }
-  }
-
-  return {};
-}
-
-// ===== Summary Helpers =====
-function sanitizeSummary(text = "") {
-  return String(text || "")
-    .replace(/^```[\s\S]*?```$/g, "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 500);
-}
-
-async function generateUserSummary(profile = {}, existingSummary = "", userMessage = "") {
-  try {
-    const response = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      temperature: 0.2,
-      messages: [
-        {
-          role: "system",
-          content: `
-あなたはキャリアアドバイザーのための要約AIです。
-ユーザーの転職プロフィール要約を、短く自然な日本語で1〜3文にまとめてください。
-
-ルール：
-- 日本語のみ
-- 1〜3文
-- 事実ベース
-- 推測しない
-- 未確定な内容は「〜意向」「〜希望」「〜可能性がある」など柔らかく表現
-- 年収、職種志向、働き方、転職温度感、強み・懸念があれば優先
-- 冗長にしない
-- 400文字以内
-`,
-        },
-        {
-          role: "user",
-          content: `既存summary:
-${existingSummary || "なし"}
-
-現在profile:
-${JSON.stringify(profile, null, 2)}
-
-今回の発話:
-${userMessage}`,
-        },
-      ],
-    });
-
-    const text = response.choices?.[0]?.message?.content || "";
-    return sanitizeSummary(text);
-  } catch (error) {
-    console.error("generateUserSummary error:", error.response?.data || error.message);
-    return sanitizeSummary(existingSummary || "");
-  }
-}
-
-// ===== AI Profile Extraction =====
-async function extractProfilePatchWithAI(userMessage) {
-  try {
-    const response = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      temperature: 0,
-      messages: [
-        {
-          role: "system",
-          content: `
-あなたはキャリアアドバイザー向けの情報抽出AIです。
-ユーザーの発話から、転職プロフィールとして保存すべき情報だけをJSONで抽出してください。
-
-出力ルール：
-- 必ずJSONオブジェクトのみを返す
-- コードブロックは使わない
-- 情報がない項目は出さない
-- 推測しない
-- 配列は文字列配列
-- 年収は「万円」の整数で返す
-- 日本語で返す
-
-使ってよいキー：
-experience_keywords
-interest_keywords
-desired_salary_man
-work_style_note
-ng_note
-strength_note
-reason_note
-change_timing
-desired_location
-minimum_salary
-office_attendance
-preferred_industries
-avoid_points_in_current_job
-
-補足：
-- preferred_industries は配列
-- avoid_points_in_current_job は配列
-- minimum_salary はユーザー表現のままでよい
-- desired_location は勤務地希望
-- office_attendance は出社頻度
-- 現職の不満や避けたい働き方は avoid_points_in_current_job に入れる
-
-change_timing は "high" / "medium" / "low" のいずれか
-`,
-        },
-        {
-          role: "user",
-          content: userMessage,
-        },
-      ],
-    });
-
-    const content = response.choices?.[0]?.message?.content || "{}";
-    const parsed = safeParseProfilePatch(content);
-
-    if (!parsed || Object.keys(parsed).length === 0) {
-      console.warn("Profile patch parse failed. raw content:", content);
-      return {};
-    }
-
-    return parsed;
-  } catch (error) {
-    console.error(
-      "extractProfilePatchWithAI error:",
-      error.response?.data || error.message
-    );
-    return {};
-  }
-}
-
-async function updateUserProfile(userId, userMessage) {
-  const existing = await getSession(userId);
-  const existingProfile = normalizeProfile(existing?.profile || {});
-  const existingSummary = existing?.summary || "";
-
-  const newPatch = await extractProfilePatchWithAI(userMessage);
-
-  let mergedProfile = existingProfile;
-
-  if (newPatch && Object.keys(newPatch).length > 0) {
-    mergedProfile = mergeProfile(existingProfile, newPatch);
-  }
-
-  const nextSummary = await generateUserSummary(
-    mergedProfile,
-    existingSummary,
-    userMessage
+  return (
+    s.includes("【今回深掘りする案】") &&
+    s.includes("【向いている人】") &&
+    s.includes("【想定される仕事内容】")
   );
-
-  const updatedSession = await upsertSession(userId, {
-    profile: mergedProfile,
-    summary: nextSummary || existingSummary || null,
-  });
-
-  return updatedSession || {
-    profile: mergedProfile,
-    summary: nextSummary || existingSummary || "",
-    interview_state: existing?.interview_state || {},
-    current_topic: existing?.current_topic || null,
-  };
 }
-
-// ===== System Prompt =====
-const SYSTEM_PROMPT = `
-あなたは優秀なキャリアアドバイザーです。
-ユーザーに対して、自然で親しみやすく、でも実務的に役立つ回答をしてください。
-
-対応できること：
-- 自己分析
-- 求人提案
-- 職務経歴書・経験整理
-- 面接対策
-- キャリア相談
-
-共通ルール：
-- 会話の途中でテーマが変わっても自然に対応する
-- ユーザーが迷っていそうなら、今できることを短く案内する
-- 「求人検索」ではなく「求人提案」という表現を使う
-- 回答はLINEで読みやすい長さと改行を意識する
-- 上から目線にならない
-- 不明点は決めつけず、確認ベースで伝える
-- できるだけ次の一歩が明確になるように返す
-- 保存済みプロフィールは自然に活かすが、未確定情報として扱う
-- 求人提案では、保存済みの希望勤務地・年収下限・出社頻度・業界希望・避けたいことがあれば優先して反映する
-`;
 
 // ===== OpenAI Ask =====
 async function askOpenAI(userId, userMessage, forcedTopic = null) {
@@ -1156,9 +627,15 @@ async function askOpenAI(userId, userMessage, forcedTopic = null) {
     const isJobSuggestionMode =
       isJobSuggestionContext(userMessage) || currentTopic === "job_suggestion";
 
-    const extraInstructions = isJobSuggestionMode
-      ? buildJobSuggestionInstruction(profile)
-      : "";
+    const isFollowup =
+      currentTopic === "job_suggestion" && isFollowupRequest(userMessage);
+
+    const extraInstructions =
+      isJobSuggestionMode && isFollowup
+        ? buildJobSuggestionFollowupInstruction(profile)
+        : isJobSuggestionMode
+        ? buildJobSuggestionInstruction(profile)
+        : "";
 
     const messages = [
       {
@@ -1218,9 +695,10 @@ ${JSON.stringify(profile, null, 2)}
       response.choices?.[0]?.message?.content || "うまく回答を作れませんでした。";
 
     console.log("isJobSuggestionMode =", isJobSuggestionMode);
+    console.log("isFollowup =", isFollowup);
     console.log("jobSuggestionFormatValid(first) =", isValidJobSuggestionFormat(reply));
 
-    if (isJobSuggestionMode && !isValidJobSuggestionFormat(reply)) {
+    if (isJobSuggestionMode && !isFollowup && !isValidJobSuggestionFormat(reply)) {
       const retryMessages = [
         ...messages,
         {
@@ -1249,7 +727,7 @@ ${JSON.stringify(profile, null, 2)}
       }
     }
 
-    if (isJobSuggestionMode) {
+    if (isJobSuggestionMode && !isFollowup) {
       reply = cleanJobSuggestionLead(reply);
     }
 
@@ -1359,6 +837,8 @@ app.post("/webhook", async (req, res) => {
         const waitingPreferenceKey = beforeInterviewState.last_asked_preference;
         const updatedProfile = normalizeProfile(updatedSession?.profile || {});
         const activeTopic = resolvedTopic || updatedSession?.current_topic || null;
+        const isFollowup =
+          activeTopic === "job_suggestion" && isFollowupRequest(userMessage);
 
         if (
           activeTopic === "job_suggestion" &&
@@ -1408,8 +888,9 @@ app.post("/webhook", async (req, res) => {
         const finishedTopic = detectFinishedTopic(userMessage);
 
         if (
-          activeTopic === "job_suggestion" ||
-          shouldAskMissingPreferences(assistantReply, activeTopic)
+          !isFollowup &&
+          (activeTopic === "job_suggestion" ||
+            shouldAskMissingPreferences(assistantReply, activeTopic))
         ) {
           const singleQuestion = buildSingleMissingQuestionMessage(updatedProfile);
           const nextQuestion = getNextMissingPreferenceQuestion(updatedProfile);
