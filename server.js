@@ -104,15 +104,25 @@ function getNextActionMenuByTopic(topic = "") {
       return `求人提案の次は、こんな進め方ができます👇
 ① 気になる求人の深掘り
 ② 職務経歴書・経験整理
-③ 面接対策
-④ キャリア相談
+③ 職務経歴書完成版
+④ 面接対策
+⑤ キャリア相談
 
 やりたいものをそのまま送ってください。`;
 
     case "resume":
       return `職務経歴書・経験整理の次は、こちらもできます👇
-① 求人提案
-② 面接対策
+① 職務経歴書完成版
+② 求人提案
+③ 面接対策
+④ キャリア相談
+
+やりたいものをそのまま送ってください。`;
+
+    case "resume_complete":
+      return `職務経歴書完成版の次は、こちらもできます👇
+① 面接対策
+② 求人提案
 ③ キャリア相談
 
 やりたいものをそのまま送ってください。`;
@@ -121,7 +131,8 @@ function getNextActionMenuByTopic(topic = "") {
       return `面接対策の次は、こちらも進められます👇
 ① 求人提案
 ② 職務経歴書・経験整理
-③ キャリア相談
+③ 職務経歴書完成版
+④ キャリア相談
 
 やりたいものをそのまま送ってください。`;
 
@@ -130,7 +141,8 @@ function getNextActionMenuByTopic(topic = "") {
 ① 自己分析
 ② 求人提案
 ③ 職務経歴書・経験整理
-④ 面接対策
+④ 職務経歴書完成版
+⑤ 面接対策
 
 やりたいものをそのまま送ってください。`;
 
@@ -175,10 +187,12 @@ function detectMenuIntent(text = "") {
   if (
     t === "3" ||
     t === "職務経歴書" ||
+    t === "職務経歴書完成版" ||
+    t === "完成版" ||
     t === "経験整理" ||
     t === "経歴整理"
   ) {
-    return "resume";
+    return t.includes("完成版") ? "resume_complete" : "resume";
   }
 
   if (t === "4" || t === "面接対策") return "interview";
@@ -230,6 +244,7 @@ function detectFinishedTopic(text = "") {
   if (!t) return null;
   if (t.includes("自己分析")) return "self_analysis";
   if (t.includes("求人提案") || t.includes("求人紹介")) return "job_suggestion";
+  if (t.includes("職務経歴書完成版") || t === "完成版") return "resume_complete";
   if (
     t.includes("職務経歴書") ||
     t.includes("経験整理") ||
@@ -308,9 +323,14 @@ function resolveCurrentTopic(userMessage = "", sessionCurrentTopic = null) {
 
   if (
     explicitIntent &&
-    ["self_analysis", "job_suggestion", "resume", "interview", "career"].includes(
-      explicitIntent
-    )
+    [
+      "self_analysis",
+      "job_suggestion",
+      "resume",
+      "resume_complete",
+      "interview",
+      "career",
+    ].includes(explicitIntent)
   ) {
     return explicitIntent;
   }
@@ -964,6 +984,90 @@ ${summary}
 `;
 }
 
+function buildResumeCompleteInstruction(
+  profile = {},
+  summary = "",
+  selectedPlan = null
+) {
+  const planGuide =
+    selectedPlan === "A"
+      ? "営業企画 / カスタマーサクセス向け"
+      : selectedPlan === "B"
+      ? "事業企画 / 新規事業向け"
+      : selectedPlan === "C"
+      ? "営業企画 / マーケティング企画向け"
+      : "営業企画 / カスタマーサクセス / 企画職向け";
+
+  return `
+今回は「職務経歴書完成版」として回答してください。
+
+前提：
+- ${planGuide}
+- profile と summary を使う
+- 実際にユーザーが話したことだけを使う
+- 推測の数値・受賞歴・資格・手法は絶対に書かない
+- そのまま職務経歴書にコピペできる形で書く
+- 不明な部分は [要確認] と書く
+- LINEで読みやすく、見出し付きにする
+
+出力形式：
+
+【職務要約】
+3〜5行
+
+【活かせる経験・強み】
+- ・・・
+- ・・・
+- ・・・
+
+【職務経歴】
+
+会社名：
+所属・役職：
+在籍期間：
+
+担当業務：
+- ・・・
+- ・・・
+- ・・・
+
+実績・工夫：
+- ・・・
+- ・・・
+- ・・・
+
+会社名：
+所属・役職：
+在籍期間：
+
+担当業務：
+- ・・・
+- ・・・
+- ・・・
+
+実績・工夫：
+- ・・・
+- ・・・
+- ・・・
+
+【自己PR】
+4〜8行
+
+【この案向けに追加で入れると良い内容】
+- ・・・
+- ・・・
+
+現在のselectedPlan:
+${selectedPlan || "未選択"}
+
+現在のprofile:
+${JSON.stringify(profile, null, 2)}
+
+現在のsummary:
+${summary}
+`;
+}
+
 function buildInterviewInstruction(profile = {}, summary = "", selectedPlan = null) {
   const planGuide =
     selectedPlan === "A"
@@ -1386,6 +1490,7 @@ const SYSTEM_PROMPT = `
 - 自己分析
 - 求人提案
 - 職務経歴書・経験整理
+- 職務経歴書完成版
 - 面接対策
 - キャリア相談
 
@@ -1414,6 +1519,7 @@ async function askOpenAI(userId, userMessage, forcedTopic = null, overrideInstru
       isJobSuggestionContext(userMessage) || currentTopic === "job_suggestion";
 
     const isResumeMode = currentTopic === "resume";
+    const isResumeCompleteMode = currentTopic === "resume_complete";
     const isInterviewMode = currentTopic === "interview";
 
     const sessionInterviewState = normalizeInterviewState(session?.interview_state || {});
@@ -1428,6 +1534,8 @@ async function askOpenAI(userId, userMessage, forcedTopic = null, overrideInstru
         ? buildJobSuggestionFollowupInstruction(profile, selectedPlan || "A")
         : isJobSuggestionMode
         ? buildJobSuggestionInstruction(profile)
+        : isResumeCompleteMode
+        ? buildResumeCompleteInstruction(profile, summary, selectedPlan)
         : isResumeMode
         ? buildResumeInstruction(profile, summary, selectedPlan)
         : isInterviewMode
@@ -1493,6 +1601,7 @@ ${JSON.stringify(profile, null, 2)}
 
     console.log("isJobSuggestionMode =", isJobSuggestionMode);
     console.log("isResumeMode =", isResumeMode);
+    console.log("isResumeCompleteMode =", isResumeCompleteMode);
     console.log("isInterviewMode =", isInterviewMode);
     console.log("selectedPlan =", selectedPlan);
     console.log("isFollowup =", isFollowup);
@@ -1559,6 +1668,8 @@ function getStarterReplyByIntent(intent) {
       return "求人提案ですね。希望職種、年収、勤務地、業界、働き方など、わかる範囲で教えてください。";
     case "resume":
       return "職務経歴書・経験整理ですね。これまでの職歴、担当業務、実績をわかる範囲で送ってください。";
+    case "resume_complete":
+      return "職務経歴書完成版ですね。これまでの会話内容をもとに、そのまま提出しやすい形でまとめます。";
     case "interview":
       return "面接対策ですね。受ける職種や企業、想定される質問があれば送ってください。";
     case "career":
@@ -1616,6 +1727,7 @@ app.post("/webhook", async (req, res) => {
           (menuIntent === "self_analysis" ||
             menuIntent === "job_suggestion" ||
             menuIntent === "resume" ||
+            menuIntent === "resume_complete" ||
             menuIntent === "interview" ||
             menuIntent === "career") &&
           shouldUseStarterReply(userMessage, menuIntent)
@@ -1746,7 +1858,7 @@ app.post("/webhook", async (req, res) => {
 - その案向けの職務経歴書を作る
 - 面接対策をする
 
-「職務経歴書」または「面接対策」と送ってください。`;
+「職務経歴書」「職務経歴書完成版」または「面接対策」と送ってください。`;
 
                 await saveMessage(userId, "assistant", reply);
                 await replyToLine(replyToken, reply);
