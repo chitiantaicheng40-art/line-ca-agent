@@ -837,7 +837,6 @@ ${answer}
 
     const completion = await openai.chat.completions.create({
       model: OPENAI_MODEL,
-      temperature: 0.4,
       messages: [
         {
           role: "system",
@@ -911,7 +910,6 @@ ${formatted}
 
     const completion = await openai.chat.completions.create({
       model: OPENAI_MODEL,
-      temperature: 0.4,
       messages: [
         {
           role: "system",
