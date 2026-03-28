@@ -946,6 +946,65 @@ ${summary}
 `;
 }
 
+function buildInterviewInstruction(profile = {}, summary = "") {
+  return `
+今回は「面接対策」として回答してください。
+
+ルール：
+- 一般論ではなく、ユーザー向けに具体的に書く
+- profile と summary を必ず使う
+- 直前の求人提案・職務経歴書の流れを踏まえる
+- 不明な事実は断定しない
+- 推測で実績・資格・受賞歴を書かない
+- LINEで読みやすくする
+- 回答例はそのまま面接で使える自然な日本語にする
+- 最後に、追加で確認したいことがあれば1〜2個だけ聞く
+
+出力形式：
+
+【想定される質問】
+- ・・・
+- ・・・
+- ・・・
+
+【回答例】
+Q. ・・・
+A. ・・・
+
+Q. ・・・
+A. ・・・
+
+【企業が懸念しそうな点】
+- ・・・
+- ・・・
+
+【その返し方】
+- ・・・
+- ・・・
+
+【逆質問】
+- ・・・
+- ・・・
+- ・・・
+
+【次に教えてほしいこと】
+- ・・・
+- ・・・
+
+禁止事項：
+- 推測の受賞歴を書かない
+- 推測の資格・フレームワークを書かない
+- 一般論の例文を混ぜない
+- 実際に話した内容を優先する
+
+現在のprofile:
+${JSON.stringify(profile, null, 2)}
+
+現在のsummary:
+${summary}
+`;
+}
+
 function isValidJobSuggestionFormat(text = "") {
   const s = String(text || "");
   return (
@@ -1318,26 +1377,26 @@ async function askOpenAI(userId, userMessage, forcedTopic = null, overrideInstru
     const summary = session?.summary || "";
     const currentTopic = forcedTopic || session?.current_topic || null;
 
-   const isJobSuggestionMode =
-  isJobSuggestionContext(userMessage) || currentTopic === "job_suggestion";
+    const isJobSuggestionMode =
+      isJobSuggestionContext(userMessage) || currentTopic === "job_suggestion";
 
-const isResumeMode = currentTopic === "resume";
-const isInterviewMode = currentTopic === "interview";
+    const isResumeMode = currentTopic === "resume";
+    const isInterviewMode = currentTopic === "interview";
 
-const isFollowup =
-  currentTopic === "job_suggestion" && isFollowupRequest(userMessage);
+    const isFollowup =
+      currentTopic === "job_suggestion" && isFollowupRequest(userMessage);
 
-const extraInstructions =
-  overrideInstruction ||
-  (isJobSuggestionMode && isFollowup
-    ? buildJobSuggestionFollowupInstruction(profile, "A")
-    : isJobSuggestionMode
-    ? buildJobSuggestionInstruction(profile)
-    : isResumeMode
-    ? buildResumeInstruction(profile, summary)
-    : isInterviewMode
-    ? buildInterviewInstruction(profile, summary)
-    : "");
+    const extraInstructions =
+      overrideInstruction ||
+      (isJobSuggestionMode && isFollowup
+        ? buildJobSuggestionFollowupInstruction(profile, "A")
+        : isJobSuggestionMode
+        ? buildJobSuggestionInstruction(profile)
+        : isResumeMode
+        ? buildResumeInstruction(profile, summary)
+        : isInterviewMode
+        ? buildInterviewInstruction(profile, summary)
+        : "");
 
     const messages = [
       {
@@ -1398,6 +1457,7 @@ ${JSON.stringify(profile, null, 2)}
 
     console.log("isJobSuggestionMode =", isJobSuggestionMode);
     console.log("isResumeMode =", isResumeMode);
+    console.log("isInterviewMode =", isInterviewMode);
     console.log("isFollowup =", isFollowup);
     console.log("jobSuggestionFormatValid(first) =", isValidJobSuggestionFormat(reply));
 
@@ -1515,37 +1575,36 @@ app.post("/webhook", async (req, res) => {
           continue;
         }
 
-       if (
-  (menuIntent === "self_analysis" ||
-    menuIntent === "job_suggestion" ||
-    menuIntent === "resume" ||
-    menuIntent === "interview" ||
-    menuIntent === "career") &&
-  shouldUseStarterReply(userMessage, menuIntent)
-) {
-  let topicToSave = menuIntent;
+        if (
+          (menuIntent === "self_analysis" ||
+            menuIntent === "job_suggestion" ||
+            menuIntent === "resume" ||
+            menuIntent === "interview" ||
+            menuIntent === "career") &&
+          shouldUseStarterReply(userMessage, menuIntent)
+        ) {
+          let topicToSave = menuIntent;
 
-  // 面接対策だけは確実に interview を保存
-  if (menuIntent === "interview") {
-    topicToSave = "interview";
-  }
+          if (menuIntent === "interview") {
+            topicToSave = "interview";
+          }
 
-  await upsertSession(userId, {
-    current_topic: topicToSave,
-    interview_state: {
-      ...(sessionBefore?.interview_state || {}),
-    },
-  });
+          await upsertSession(userId, {
+            current_topic: topicToSave,
+            interview_state: {
+              ...(sessionBefore?.interview_state || {}),
+            },
+          });
 
-  const reply = getStarterReplyByIntent(menuIntent);
+          const reply = getStarterReplyByIntent(menuIntent);
 
-  await saveMessage(userId, "assistant", reply);
-  await replyToLine(replyToken, reply);
+          await saveMessage(userId, "assistant", reply);
+          await replyToLine(replyToken, reply);
 
-  console.log("saved current_topic =", topicToSave);
+          console.log("saved current_topic =", topicToSave);
 
-  continue;
-}
+          continue;
+        }
 
         const beforeInterviewState = normalizeInterviewState(
           sessionBefore?.interview_state || {}
