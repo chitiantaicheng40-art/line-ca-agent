@@ -158,11 +158,7 @@ function detectMenuIntent(text = "") {
     return "show_menu";
   }
 
-  if (
-    t === "1" ||
-    t === "自己分析" ||
-    t === "自己分析したい"
-  ) {
+  if (t === "1" || t === "自己分析" || t === "自己分析したい") {
     return "self_analysis";
   }
 
@@ -185,19 +181,8 @@ function detectMenuIntent(text = "") {
     return "resume";
   }
 
-  if (
-    t === "4" ||
-    t === "面接対策"
-  ) {
-    return "interview";
-  }
-
-  if (
-    t === "5" ||
-    t === "キャリア相談"
-  ) {
-    return "career";
-  }
+  if (t === "4" || t === "面接対策") return "interview";
+  if (t === "5" || t === "キャリア相談") return "career";
 
   return null;
 }
@@ -226,6 +211,11 @@ function shouldUseStarterReply(userMessage = "", menuIntent = null) {
     "以下",
     "くらい",
     "未満",
+    "saaS",
+    "SaaS",
+    "人材",
+    "メーカー",
+    "IT",
   ];
 
   if (t.length >= 20) return false;
@@ -384,6 +374,13 @@ function buildJobSuggestionInstruction() {
 - 実在求人の断定はしない
 - 今は「どういう求人が合いそうか」の提案でよい
 - ユーザーの profile と summary を優先して使う
+- 特に preferred_industries がある場合は、必ずその業界を前提に職種例・理由・合う点を書く
+- preferred_industries が ["SaaS","人材"] の場合は、SaaS企業・人材会社を前提にする
+- desired_location がある場合は勤務地に反映する
+- minimum_salary がある場合は年収条件に反映する
+- office_attendance がある場合は、出社頻度に合う求人だけを前提にする
+- avoid_points_in_current_job がある場合は、その要素を避けた求人として書く
+- profile にない条件を勝手に補わない
 - 3案の違いがはっきり分かるようにする
 - 必ずA/B/Cの順番で出す
 - 1案あたり長くしすぎない
@@ -969,9 +966,22 @@ async function askOpenAI(userId, userMessage) {
       },
       {
         role: "system",
-        content:
-          "このユーザーの現在プロフィールです。会話に自然に活かしてください。未確定情報は断定せず、確認ベースで扱ってください。\n" +
-          JSON.stringify(profile, null, 2),
+        content: `
+このユーザーの現在プロフィールです。
+求人提案では必ずこの内容を優先して反映してください。
+
+profile:
+${JSON.stringify(profile, null, 2)}
+
+特に以下は最優先です：
+- preferred_industries
+- desired_location
+- minimum_salary
+- office_attendance
+- avoid_points_in_current_job
+
+未確定情報は断定せず、確認ベースで扱ってください。
+`,
       },
       {
         role: "system",
