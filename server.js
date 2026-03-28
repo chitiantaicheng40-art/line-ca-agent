@@ -149,8 +149,8 @@ function detectMenuIntent(text = "") {
     t.includes("できること") ||
     t.includes("何ができる") ||
     t.includes("なにができる") ||
-    t.includes("メニュー") ||
-    t.includes("一覧") ||
+    t === "メニュー" ||
+    t === "一覧" ||
     t.includes("話を変えたい") ||
     t.includes("テーマ変えたい") ||
     t.includes("他に何できる")
@@ -158,30 +158,80 @@ function detectMenuIntent(text = "") {
     return "show_menu";
   }
 
-  if (t === "1" || t.includes("自己分析")) return "self_analysis";
+  if (
+    t === "1" ||
+    t === "自己分析" ||
+    t === "自己分析したい"
+  ) {
+    return "self_analysis";
+  }
 
   if (
     t === "2" ||
-    t.includes("求人提案") ||
-    t.includes("求人を提案") ||
-    t.includes("求人紹介")
+    t === "求人提案" ||
+    t === "求人提案して" ||
+    t === "求人紹介" ||
+    t === "求人を提案して"
   ) {
     return "job_suggestion";
   }
 
   if (
     t === "3" ||
-    t.includes("職務経歴書") ||
-    t.includes("経験整理") ||
-    t.includes("経歴整理")
+    t === "職務経歴書" ||
+    t === "経験整理" ||
+    t === "経歴整理"
   ) {
     return "resume";
   }
 
-  if (t === "4" || t.includes("面接対策")) return "interview";
-  if (t === "5" || t.includes("キャリア相談")) return "career";
+  if (
+    t === "4" ||
+    t === "面接対策"
+  ) {
+    return "interview";
+  }
+
+  if (
+    t === "5" ||
+    t === "キャリア相談"
+  ) {
+    return "career";
+  }
 
   return null;
+}
+
+function shouldUseStarterReply(userMessage = "", menuIntent = null) {
+  const t = (userMessage || "").trim();
+  if (!menuIntent) return false;
+
+  const detailHints = [
+    "年収",
+    "勤務地",
+    "勤務",
+    "出社",
+    "リモート",
+    "フルリモート",
+    "業界",
+    "職種",
+    "営業経験",
+    "企画",
+    "転職",
+    "現職",
+    "避けたい",
+    "したい",
+    "希望",
+    "以上",
+    "以下",
+    "くらい",
+    "未満",
+  ];
+
+  if (t.length >= 20) return false;
+  if (detailHints.some((w) => t.includes(w))) return false;
+
+  return true;
 }
 
 function detectFinishedTopic(text = "") {
@@ -341,6 +391,109 @@ function buildJobSuggestionInstruction() {
 `;
 }
 
+// ===== Preference Missing-Field Logic =====
+const REQUIRED_PREFERENCE_FIELDS = [
+  {
+    key: "desired_location",
+    label: "希望勤務地",
+    question:
+      "希望勤務地を教えてください。（例：東京23区、大阪市、福岡市、フルリモート希望 など）",
+  },
+  {
+    key: "minimum_salary",
+    label: "許容年収下限",
+    question:
+      "許容年収の下限を教えてください。（例：500万円以上、現年収以上 など）",
+  },
+  {
+    key: "office_attendance",
+    label: "出社頻度",
+    question:
+      "希望する出社頻度を教えてください。（例：フル出社、週3出社、週1出社、フルリモート など）",
+  },
+  {
+    key: "preferred_industries",
+    label: "業界希望",
+    question:
+      "興味のある業界があれば教えてください。（例：IT、人材、SaaS、メーカー など）",
+  },
+  {
+    key: "avoid_points_in_current_job",
+    label: "現職で避けたいこと",
+    question:
+      "次の転職先で避けたいことを教えてください。（例：長時間労働、トップダウン、転勤が多い、テレアポ中心 など）",
+  },
+];
+
+function normalizeProfile(profile = {}) {
+  return {
+    experience_keywords: Array.isArray(profile.experience_keywords)
+      ? profile.experience_keywords
+      : [],
+    interest_keywords: Array.isArray(profile.interest_keywords)
+      ? profile.interest_keywords
+      : [],
+    desired_location: profile.desired_location || "",
+    minimum_salary: profile.minimum_salary || "",
+    office_attendance: profile.office_attendance || "",
+    preferred_industries: Array.isArray(profile.preferred_industries)
+      ? profile.preferred_industries
+      : profile.preferred_industries
+      ? [String(profile.preferred_industries)]
+      : [],
+    avoid_points_in_current_job: Array.isArray(profile.avoid_points_in_current_job)
+      ? profile.avoid_points_in_current_job
+      : profile.avoid_points_in_current_job
+      ? [String(profile.avoid_points_in_current_job)]
+      : [],
+    ...profile,
+  };
+}
+
+function isFieldFilled(value) {
+  if (Array.isArray(value)) {
+    return value.map((v) => String(v || "").trim()).filter(Boolean).length > 0;
+  }
+  return value !== undefined && value !== null && String(value).trim() !== "";
+}
+
+function getMissingPreferenceFields(profile = {}) {
+  const normalized = normalizeProfile(profile);
+  return REQUIRED_PREFERENCE_FIELDS.filter(
+    (item) => !isFieldFilled(normalized[item.key])
+  );
+}
+
+function buildMissingQuestionsMessage(profile = {}) {
+  const missing = getMissingPreferenceFields(profile);
+  if (missing.length === 0) return "";
+
+  const lines = missing.map((item, index) => `${index + 1}. ${item.question}`);
+
+  return `\n\n---\nよりマッチ度の高い求人に絞るため、差し支えない範囲で以下だけ教えてください。\n${lines.join(
+    "\n"
+  )}\n回答できるものだけで大丈夫です。`;
+}
+
+function shouldAskMissingPreferences(aiReply = "") {
+  const text = String(aiReply || "");
+
+  const proposalHints = [
+    "求人",
+    "職種例",
+    "おすすめ理由",
+    "合う点",
+    "懸念点",
+    "安定寄り",
+    "成長寄り",
+    "バランス寄り",
+    "ポジション",
+    "ご提案",
+  ];
+
+  return proposalHints.some((word) => text.includes(word));
+}
+
 // ===== Conversation History =====
 async function getRecentMessages(userId, limit = 10) {
   if (!supabase) return [];
@@ -391,7 +544,11 @@ async function getSession(userId) {
     return null;
   }
 
-  return data;
+  if (!data) return null;
+  return {
+    ...data,
+    profile: normalizeProfile(data.profile || {}),
+  };
 }
 
 async function upsertSession(userId, patch = {}) {
@@ -399,11 +556,8 @@ async function upsertSession(userId, patch = {}) {
 
   const existing = await getSession(userId);
 
-  const currentProfile = existing?.profile || {};
-  const mergedProfile = {
-    ...currentProfile,
-    ...(patch.profile || {}),
-  };
+  const currentProfile = normalizeProfile(existing?.profile || {});
+  const mergedProfile = mergeProfile(currentProfile, patch.profile || {});
 
   const payload = {
     user_id: userId,
@@ -429,7 +583,10 @@ async function upsertSession(userId, patch = {}) {
     return null;
   }
 
-  return data;
+  return {
+    ...data,
+    profile: normalizeProfile(data.profile || {}),
+  };
 }
 
 function mergeUniqueStringArray(oldArr = [], newArr = []) {
@@ -437,26 +594,42 @@ function mergeUniqueStringArray(oldArr = [], newArr = []) {
 }
 
 function mergeProfile(existingProfile = {}, newPatch = {}) {
+  const base = normalizeProfile(existingProfile);
+
   const merged = {
-    ...existingProfile,
+    ...base,
     ...newPatch,
   };
 
-  if (existingProfile.experience_keywords || newPatch.experience_keywords) {
+  if (base.experience_keywords || newPatch.experience_keywords) {
     merged.experience_keywords = mergeUniqueStringArray(
-      existingProfile.experience_keywords || [],
+      base.experience_keywords || [],
       newPatch.experience_keywords || []
     );
   }
 
-  if (existingProfile.interest_keywords || newPatch.interest_keywords) {
+  if (base.interest_keywords || newPatch.interest_keywords) {
     merged.interest_keywords = mergeUniqueStringArray(
-      existingProfile.interest_keywords || [],
+      base.interest_keywords || [],
       newPatch.interest_keywords || []
     );
   }
 
-  return merged;
+  if (base.preferred_industries || newPatch.preferred_industries) {
+    merged.preferred_industries = mergeUniqueStringArray(
+      base.preferred_industries || [],
+      newPatch.preferred_industries || []
+    );
+  }
+
+  if (base.avoid_points_in_current_job || newPatch.avoid_points_in_current_job) {
+    merged.avoid_points_in_current_job = mergeUniqueStringArray(
+      base.avoid_points_in_current_job || [],
+      newPatch.avoid_points_in_current_job || []
+    );
+  }
+
+  return normalizeProfile(merged);
 }
 
 // ===== Safe JSON Helpers =====
@@ -520,6 +693,11 @@ function sanitizeProfilePatch(raw = {}) {
     "strength_note",
     "reason_note",
     "change_timing",
+    "desired_location",
+    "minimum_salary",
+    "office_attendance",
+    "preferred_industries",
+    "avoid_points_in_current_job",
   ]);
 
   const cleaned = {};
@@ -527,13 +705,21 @@ function sanitizeProfilePatch(raw = {}) {
   for (const [key, value] of Object.entries(raw)) {
     if (!allowedKeys.has(key)) continue;
 
-    if (key === "experience_keywords" || key === "interest_keywords") {
+    if (
+      key === "experience_keywords" ||
+      key === "interest_keywords" ||
+      key === "preferred_industries" ||
+      key === "avoid_points_in_current_job"
+    ) {
       if (Array.isArray(value)) {
         const arr = value
           .map((v) => String(v || "").trim())
           .filter(Boolean)
           .slice(0, 10);
         if (arr.length > 0) cleaned[key] = arr;
+      } else {
+        const str = String(value || "").trim();
+        if (str) cleaned[key] = [str.slice(0, 200)];
       }
       continue;
     }
@@ -668,6 +854,19 @@ ng_note
 strength_note
 reason_note
 change_timing
+desired_location
+minimum_salary
+office_attendance
+preferred_industries
+avoid_points_in_current_job
+
+補足：
+- preferred_industries は配列
+- avoid_points_in_current_job は配列
+- minimum_salary はユーザー表現のままでよい（例："500万円以上", "現年収以上"）
+- desired_location は勤務地希望
+- office_attendance は出社頻度
+- 現職の不満や避けたい働き方は avoid_points_in_current_job に入れる
 
 change_timing は "high" / "medium" / "low" のいずれか
 `,
@@ -699,7 +898,7 @@ change_timing は "high" / "medium" / "low" のいずれか
 
 async function updateUserProfile(userId, userMessage) {
   const existing = await getSession(userId);
-  const existingProfile = existing?.profile || {};
+  const existingProfile = normalizeProfile(existing?.profile || {});
   const existingSummary = existing?.summary || "";
 
   const newPatch = await extractProfilePatchWithAI(userMessage);
@@ -716,10 +915,15 @@ async function updateUserProfile(userId, userMessage) {
     userMessage
   );
 
-  await upsertSession(userId, {
+  const updatedSession = await upsertSession(userId, {
     profile: mergedProfile,
     summary: nextSummary || existingSummary || null,
   });
+
+  return updatedSession || {
+    profile: mergedProfile,
+    summary: nextSummary || existingSummary || "",
+  };
 }
 
 // ===== System Prompt =====
@@ -743,6 +947,7 @@ const SYSTEM_PROMPT = `
 - 不明点は決めつけず、確認ベースで伝える
 - できるだけ次の一歩が明確になるように返す
 - 保存済みプロフィールは自然に活かすが、未確定情報として扱う
+- 求人提案では、保存済みの希望勤務地・年収下限・出社頻度・業界希望・避けたいことがあれば優先して反映する
 `;
 
 // ===== OpenAI Ask =====
@@ -750,7 +955,7 @@ async function askOpenAI(userId, userMessage) {
   try {
     const history = await getRecentMessages(userId, 12);
     const session = await getSession(userId);
-    const profile = session?.profile || {};
+    const profile = normalizeProfile(session?.profile || {});
     const summary = session?.summary || "";
 
     const extraInstructions = isJobSuggestionContext(userMessage)
@@ -838,7 +1043,7 @@ app.post("/webhook", async (req, res) => {
         console.log("User message:", userMessage);
 
         await saveMessage(userId, "user", userMessage);
-        await updateUserProfile(userId, userMessage);
+        const updatedSession = await updateUserProfile(userId, userMessage);
 
         const menuIntent = detectMenuIntent(userMessage);
 
@@ -850,11 +1055,12 @@ app.post("/webhook", async (req, res) => {
         }
 
         if (
-          menuIntent === "self_analysis" ||
-          menuIntent === "job_suggestion" ||
-          menuIntent === "resume" ||
-          menuIntent === "interview" ||
-          menuIntent === "career"
+          (menuIntent === "self_analysis" ||
+            menuIntent === "job_suggestion" ||
+            menuIntent === "resume" ||
+            menuIntent === "interview" ||
+            menuIntent === "career") &&
+          shouldUseStarterReply(userMessage, menuIntent)
         ) {
           const reply = getStarterReplyByIntent(menuIntent);
           await saveMessage(userId, "assistant", reply);
@@ -866,6 +1072,15 @@ app.post("/webhook", async (req, res) => {
 
         let finalReply = assistantReply;
         const finishedTopic = detectFinishedTopic(userMessage);
+
+        if (shouldAskMissingPreferences(assistantReply)) {
+          const missingQuestions = buildMissingQuestionsMessage(
+            updatedSession?.profile || {}
+          );
+          if (missingQuestions) {
+            finalReply += missingQuestions;
+          }
+        }
 
         if (finishedTopic) {
           finalReply += `\n\n---\n${getNextActionMenuByTopic(finishedTopic)}`;
