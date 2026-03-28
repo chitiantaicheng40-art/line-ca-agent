@@ -385,6 +385,7 @@ function buildJobSuggestionInstruction() {
 - 必ずA/B/Cの順番で出す
 - 1案あたり長くしすぎない
 - LINEで読みやすいように、空行と箇条書きを使う
+- 各案の職種例は、可能なら業界名も入れる（例：SaaS企業の営業企画 / 人材会社の事業企画）
 `;
 }
 
