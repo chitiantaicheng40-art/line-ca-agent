@@ -1062,6 +1062,13 @@ ${JSON.stringify(profile, null, 2)}
   }
 }
 
+async function generateAutoRefinedJobSuggestion(userId) {
+  const autoPrompt =
+    "保存済みの条件がそろったので、現在のプロフィールを前提に改めて求人提案してください。A/B/Cの3パターンで、より条件に沿って具体的に提案してください。";
+
+  return await askOpenAI(userId, autoPrompt);
+}
+
 // ===== Topic Starter Replies =====
 function getStarterReplyByIntent(intent) {
   switch (intent) {
@@ -1157,9 +1164,6 @@ app.post("/webhook", async (req, res) => {
             await replyToLine(replyToken, reply);
             continue;
           } else {
-            const reply =
-              "ありがとうございます。希望条件の確認がそろいました。\nこの条件を前提に、より精度高く求人提案できます。続けて求人提案したい場合は、そのまま「求人提案して」と送ってください。";
-
             await upsertSession(userId, {
               interview_state: {
                 pending_preference_questions: [],
@@ -1167,8 +1171,17 @@ app.post("/webhook", async (req, res) => {
               },
             });
 
-            await saveMessage(userId, "assistant", reply);
-            await replyToLine(replyToken, reply);
+            const regeneratedReply = await generateAutoRefinedJobSuggestion(userId);
+            let finalReply =
+              "ありがとうございます。条件がそろったので、この内容で改めて求人提案します。\n\n" +
+              regeneratedReply;
+
+            if (shouldAppendMenu(userMessage, regeneratedReply)) {
+              finalReply += `\n\n---\n${getMainMenuText()}`;
+            }
+
+            await saveMessage(userId, "assistant", finalReply);
+            await replyToLine(replyToken, finalReply);
             continue;
           }
         }
