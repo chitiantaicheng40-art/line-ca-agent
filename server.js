@@ -466,6 +466,9 @@ function normalizeInterviewState(interviewState = {}) {
       typeof interviewState.jobSuggestionStep === "number"
         ? interviewState.jobSuggestionStep
         : undefined,
+    selectedPlan: ["A", "B", "C"].includes(interviewState.selectedPlan)
+      ? interviewState.selectedPlan
+      : null,
     ...interviewState,
   };
 }
@@ -887,7 +890,16 @@ ${JSON.stringify(profile, null, 2)}
 `;
 }
 
-function buildResumeInstruction(profile = {}, summary = "") {
+function buildResumeInstruction(profile = {}, summary = "", selectedPlan = null) {
+  const planGuide =
+    selectedPlan === "A"
+      ? "今回は A案（営業企画 / カスタマーサクセス寄り）を前提に、職務経歴書を作成してください。顧客理解、提案力、業務改善、継続支援との親和性を強めに出してください。"
+      : selectedPlan === "B"
+      ? "今回は B案（事業企画 / 新規事業開発寄り）を前提に、職務経歴書を作成してください。課題整理、関係者調整、業務設計、推進力との親和性を強めに出してください。"
+      : selectedPlan === "C"
+      ? "今回は C案（マーケティング企画 / 営業企画寄り）を前提に、職務経歴書を作成してください。顧客理解、提案改善、再現性、企画視点との親和性を強めに出してください。"
+      : "まだ案が確定していない場合は、営業企画 / カスタマーサクセス / 企画職に広くつながる形でまとめてください。";
+
   return `
 今回は「職務経歴書・経験整理」として回答してください。
 
@@ -903,6 +915,9 @@ function buildResumeInstruction(profile = {}, summary = "") {
 - 数値が不明な場合は「◯%」「◯件」ではなく「改善に貢献」「複数案件を担当」と書く
 - わからない部分は「ここを教えてください」と最後に1〜2個だけ聞く
 - 「社内表彰」「LEAN」「Six Sigma」など、ユーザーが明示していない固有名詞・資格・手法は書かない
+
+案の前提：
+${planGuide}
 
 出力形式：
 
@@ -938,6 +953,9 @@ function buildResumeInstruction(profile = {}, summary = "") {
 - 一般論の例文を混ぜない
 - 実際に話した内容を優先する
 
+現在のselectedPlan:
+${selectedPlan || "未選択"}
+
 現在のprofile:
 ${JSON.stringify(profile, null, 2)}
 
@@ -946,7 +964,16 @@ ${summary}
 `;
 }
 
-function buildInterviewInstruction(profile = {}, summary = "") {
+function buildInterviewInstruction(profile = {}, summary = "", selectedPlan = null) {
+  const planGuide =
+    selectedPlan === "A"
+      ? "今回は A案（営業企画 / カスタマーサクセス寄り）を前提に面接対策をしてください。顧客理解、提案力、継続支援、関係構築を軸にしてください。"
+      : selectedPlan === "B"
+      ? "今回は B案（事業企画 / 新規事業開発寄り）を前提に面接対策をしてください。課題整理、推進力、部門横断連携、企画志向を軸にしてください。"
+      : selectedPlan === "C"
+      ? "今回は C案（マーケティング企画 / 営業企画寄り）を前提に面接対策をしてください。顧客理解、提案改善、数字の見方、企画への接続を軸にしてください。"
+      : "まだ案が確定していない場合は、営業企画 / カスタマーサクセス / 企画職に広く通用する面接対策にしてください。";
+
   return `
 今回は「面接対策」として回答してください。
 
@@ -959,6 +986,9 @@ function buildInterviewInstruction(profile = {}, summary = "") {
 - LINEで読みやすくする
 - 回答例はそのまま面接で使える自然な日本語にする
 - 最後に、追加で確認したいことがあれば1〜2個だけ聞く
+
+案の前提：
+${planGuide}
 
 出力形式：
 
@@ -996,6 +1026,9 @@ A. ・・・
 - 推測の資格・フレームワークを書かない
 - 一般論の例文を混ぜない
 - 実際に話した内容を優先する
+
+現在のselectedPlan:
+${selectedPlan || "未選択"}
 
 現在のprofile:
 ${JSON.stringify(profile, null, 2)}
@@ -1383,19 +1416,22 @@ async function askOpenAI(userId, userMessage, forcedTopic = null, overrideInstru
     const isResumeMode = currentTopic === "resume";
     const isInterviewMode = currentTopic === "interview";
 
+    const sessionInterviewState = normalizeInterviewState(session?.interview_state || {});
+    const selectedPlan = sessionInterviewState.selectedPlan || null;
+
     const isFollowup =
       currentTopic === "job_suggestion" && isFollowupRequest(userMessage);
 
     const extraInstructions =
       overrideInstruction ||
       (isJobSuggestionMode && isFollowup
-        ? buildJobSuggestionFollowupInstruction(profile, "A")
+        ? buildJobSuggestionFollowupInstruction(profile, selectedPlan || "A")
         : isJobSuggestionMode
         ? buildJobSuggestionInstruction(profile)
         : isResumeMode
-        ? buildResumeInstruction(profile, summary)
+        ? buildResumeInstruction(profile, summary, selectedPlan)
         : isInterviewMode
-        ? buildInterviewInstruction(profile, summary)
+        ? buildInterviewInstruction(profile, summary, selectedPlan)
         : "");
 
     const messages = [
@@ -1458,6 +1494,7 @@ ${JSON.stringify(profile, null, 2)}
     console.log("isJobSuggestionMode =", isJobSuggestionMode);
     console.log("isResumeMode =", isResumeMode);
     console.log("isInterviewMode =", isInterviewMode);
+    console.log("selectedPlan =", selectedPlan);
     console.log("isFollowup =", isFollowup);
     console.log("jobSuggestionFormatValid(first) =", isValidJobSuggestionFormat(reply));
 
@@ -1677,6 +1714,7 @@ app.post("/webhook", async (req, res) => {
               interview_state: {
                 ...interviewState,
                 jobSuggestionStep: targetStep,
+                selectedPlan: requestedLabel,
               },
             });
 
