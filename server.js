@@ -1077,6 +1077,38 @@ async function saveCandidateHypothesis({
 
   return data;
 }
+
+async function saveCandidateJob({
+  userId,
+  hypothesisId,
+  orderIndex,
+  title,
+  companyName,
+  summary,
+}) {
+  if (!supabase) return null;
+
+  const { data, error } = await supabase
+    .from("candidate_jobs")
+    .insert({
+      user_id: userId,
+      hypothesis_id: hypothesisId,
+      order_index: orderIndex,
+      title,
+      company_name: companyName,
+      summary,
+    })
+    .select()
+    .single();
+
+  if (error) {
+    console.error("saveCandidateJob error:", error.message);
+    return null;
+  }
+
+  return data;
+}
+
 // ===== Conversation History =====
 async function getRecentMessages(userId, limit = 10) {
 // ===== Conversation History =====
@@ -4133,13 +4165,18 @@ await upsertSession(userId, {
     }
 
     return res.status(200).send("OK");
-  } catch (error) {
-    console.error("Webhook error:", error);
-    return res.status(500).send("Internal Server Error");
+     } catch (error) {
+      console.error("Event handling error:", error);
+    }
   }
+
+  res.status(200).send("OK");
+} catch (error) {
+  console.error("Webhook error:", error);
+  res.status(500).send("Internal Server Error");
+}
 });
 
-// ===== Start Server =====
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
 });
