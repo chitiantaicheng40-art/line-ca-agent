@@ -1126,6 +1126,44 @@ async function saveCandidateJob({
   return data;
 }
 
+async function saveCandidateHypothesis({
+  userId,
+  label,
+  title,
+  summary,
+  strengths = [],
+  concerns = [],
+}) {
+  if (!userId || !label) return null;
+
+  const session = (await getSession(userId)) || {};
+  const interviewState = normalizeInterviewState(
+    session.interview_state || {}
+  );
+
+  const updatedHypotheses = {
+    ...(interviewState.candidate_hypotheses || {}),
+    [label]: {
+      label,
+      title: title || "",
+      summary: summary || "",
+      strengths,
+      concerns,
+      savedAt: new Date().toISOString(),
+    },
+  };
+
+  await upsertSession(userId, {
+    interview_state: {
+      ...interviewState,
+      candidate_hypotheses: updatedHypotheses,
+      current_hypothesis_id: label,
+    },
+  });
+
+  return updatedHypotheses[label];
+}
+
 // ===== Conversation History =====
 async function getRecentMessages(userId, limit = 10) {
   if (!supabase) return [];
@@ -1242,12 +1280,15 @@ async function startMockInterview(
   sessionBefore = null,
   userMessage = ""
 ) {
-  const currentState = normalizeInterviewState(sessionBefore?.interview_state || {});
-　const { type, strictness, companyTemplate } =
+  const currentState = normalizeInterviewState(
+  sessionBefore?.interview_state || {}
+);
+const { type, strictness, companyTemplate } =
   getMockInterviewTypeAndStrictness(
     userMessage,
     currentState.selectedPlan || currentState.lastSelectedPlan || null
   );
+
   const customTemplateName =
     !companyTemplate && currentState.companyTemplateName
       ? currentState.companyTemplateName
