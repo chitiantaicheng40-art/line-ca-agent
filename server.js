@@ -2315,6 +2315,13 @@ function buildResumeInstruction(profile = {}, summary = "", selectedPlan = null)
 案の前提：
 ${planGuide}
 
+追加ルール（既知情報の反映）：
+- profile や summary に会社名・在籍期間・実績がある場合は、[要確認] にせず反映する
+- 既知情報として保持している内容（JFEスチールでの生産管理・業務改善、リクルートでの法人営業、売上125% など）は、profile / summary に存在する限り使ってよい
+- selectedPlan が B の場合は、事業企画 / BizOps / BizDev 向けに、課題整理・関係者巻き込み・改善推進の再現性が伝わるように整理する
+- ただし、存在しない経験（例：SQL、Salesforce、SaaS営業経験など）は断定しない
+- [要確認] は、本当に profile / summary に存在しない項目だけに使う
+
 出力形式：
 
 【職務要約】
