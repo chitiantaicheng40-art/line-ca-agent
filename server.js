@@ -4113,39 +4113,39 @@ await upsertSession(userId, {
           activeTopic === "job_suggestion" && isFollowupRequest(userMessage);
 
         if (
-          !isFollowup &&
-          (activeTopic === "job_suggestion" ||
-            shouldAskMissingPreferences(assistantReply, activeTopic))
-        ) {
-          const singleQuestion = buildSingleMissingQuestionMessage(updatedProfile);
-          const nextQuestion = getNextMissingPreferenceQuestion(updatedProfile);
+  !isFollowup &&
+  (activeTopic === "job_suggestion" ||
+    shouldAskMissingPreferences(assistantReply, activeTopic))
+) {
+  const singleQuestion = buildSingleMissingQuestionMessage(updatedProfile);
+  const nextQuestion = getNextMissingPreferenceQuestion(updatedProfile);
 
-          if (singleQuestion && nextQuestion) {
-            finalReply += singleQuestion;
+  if (singleQuestion && nextQuestion) {
+    finalReply += singleQuestion;
 
-            await upsertSession(userId, {
-              current_topic: "job_suggestion",
-              interview_state: {
-                ...currentState,
-                pending_preference_questions: nextQuestion.remainingKeys,
-                last_asked_preference: nextQuestion.key,
-                lastOutputType: "job_suggestion_preference_question",
-              },
-            });
-          } else if (activeTopic === "job_suggestion") {
-            await upsertSession(userId, {
- 　　　　　　　 current_topic: "job_suggestion",
-  　　　　　　　current_stage: "job_suggestion",
-  　　　　　　　interview_state: {
-    　　　　　　　...currentState,
-    　　　　　　　pending_preference_questions: [],
-    　　　　　　　last_asked_preference: null,
-    　　　　　　　lastOutputType: "job_suggestion_main",
-  　　　　　　　},
-　　　　　　　});
-          }
-        }
-
+    await upsertSession(userId, {
+      current_topic: "job_suggestion",
+      current_stage: "job_suggestion",
+      interview_state: {
+        ...currentState,
+        pending_preference_questions: nextQuestion.remainingKeys,
+        last_asked_preference: nextQuestion.key,
+        lastOutputType: "job_suggestion_preference_question",
+      },
+    });
+  } else if (activeTopic === "job_suggestion") {
+    await upsertSession(userId, {
+      current_topic: "job_suggestion",
+      current_stage: "job_suggestion",
+      interview_state: {
+        ...currentState,
+        pending_preference_questions: [],
+        last_asked_preference: null,
+        lastOutputType: "job_suggestion_main",
+      },
+    });
+  }
+}
         const shouldSkipTopicMenu =
           activeTopic === "job_suggestion" ||
           isJobSuggestionContext(userMessage) ||
