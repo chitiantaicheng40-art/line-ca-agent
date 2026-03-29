@@ -2403,6 +2403,153 @@ ${JSON.stringify(profile, null, 2)}
 `;
 }
 
+function isConcreteThreeJobsRequest(text = "") {
+  const t = String(text || "").trim();
+
+  return (
+    t.includes("具体求人3件") ||
+    t.includes("具体的な求人3件") ||
+    t.includes("具体求人を3件") ||
+    t.includes("求人3件") ||
+    t.includes("3件出して") ||
+    t.includes("3件提案") ||
+    t.includes("具体求人")
+  );
+}
+
+function buildConcreteThreeJobsInstruction(profile = {}, selectedPlan = "A") {
+  const planMap = {
+    A: "営業企画 / RevOps / カスタマーサクセス企画",
+    B: "事業企画 / BizOps / 新規事業開発",
+    C: "マーケティング企画 / 営業企画 / パートナーセールス",
+  };
+
+  const planLabel = planMap[selectedPlan] || "企画系職種";
+
+  return `
+今回は「具体求人3件の提案」です。
+ユーザーは ${selectedPlan} 案を前提に、より具体的な求人イメージを3件見たいと考えています。
+
+重要ルール：
+- 実在企業の断定はしない
+- ただし「実際にありそうな求人票レベル」で具体化する
+- profile にない事実を足さない
+- ユーザーが明示していない経験を断定しない
+- LINEで読みやすく、3件を明確に分ける
+- selectedPlan に沿った職種で統一する
+- それぞれ少しずつ特徴を変える
+- 最後は必ず次アクションで締める
+
+出力形式：
+
+ありがとうございます。${selectedPlan}案を前提に、具体求人イメージを3件出します。
+
+【求人1】
+職種：
+業界：
+会社タイプ：
+想定年収：
+勤務地 / 働き方：
+
+【仕事内容】
+- ・・・
+- ・・・
+- ・・・
+
+【この人に合う理由】
+- ・・・
+- ・・・
+- ・・・
+
+【受かるために強調したいこと】
+- ・・・
+- ・・・
+- ・・・
+
+【懸念点】
+- ・・・
+- ・・・
+
+【求人2】
+職種：
+業界：
+会社タイプ：
+想定年収：
+勤務地 / 働き方：
+
+【仕事内容】
+- ・・・
+- ・・・
+- ・・・
+
+【この人に合う理由】
+- ・・・
+- ・・・
+- ・・・
+
+【受かるために強調したいこと】
+- ・・・
+- ・・・
+- ・・・
+
+【懸念点】
+- ・・・
+- ・・・
+
+【求人3】
+職種：
+業界：
+会社タイプ：
+想定年収：
+勤務地 / 働き方：
+
+【仕事内容】
+- ・・・
+- ・・・
+- ・・・
+
+【この人に合う理由】
+- ・・・
+- ・・・
+- ・・・
+
+【受かるために強調したいこと】
+- ・・・
+- ・・・
+- ・・・
+
+【懸念点】
+- ・・・
+- ・・・
+
+【おすすめ応募順】
+1位：
+2位：
+3位：
+
+【次に進めます】
+1. 求人1向けの職務経歴書を作る
+2. 求人2向けの職務経歴書を作る
+3. 求人3向けの職務経歴書を作る
+4. 面接対策をする
+5. 模擬面接を始める
+
+補足前提：
+- 今回の軸は ${planLabel}
+- preferred_industries があれば最優先で反映
+- desired_location があれば勤務地に反映
+- minimum_salary があれば想定年収に反映
+- office_attendance があれば働き方に反映
+- avoid_points_in_current_job があれば求人設計に反映
+- 未取得条件があっても、今ある情報だけで最大限具体化する
+- 3件とも同じ内容にしない
+- 「受かるために強調したいこと」は、事実ベースで言える範囲に限定する
+
+現在のプロフィール:
+${JSON.stringify(profile, null, 2)}
+`;
+}
+
 function buildResumeInstruction(profile = {}, summary = "", selectedPlan = null) {
   const planGuide =
     selectedPlan === "A"
@@ -3055,19 +3202,23 @@ async function askOpenAI(userId, userMessage, forcedTopic = null, overrideInstru
     const isFollowup =
       currentTopic === "job_suggestion" && isFollowupRequest(userMessage);
 
-    const extraInstructions =
-      overrideInstruction ||
-      (isJobSuggestionMode && isFollowup
-        ? buildJobSuggestionFollowupInstruction(profile, selectedPlan || "A")
-        : isJobSuggestionMode
-        ? buildJobSuggestionInstruction(profile)
-        : isResumeCompleteMode
-        ? buildResumeCompleteInstruction(profile, summary, selectedPlan)
-        : isResumeMode
-        ? buildResumeInstruction(profile, summary, selectedPlan)
-        : isInterviewMode
-        ? buildInterviewInstruction(profile, summary, selectedPlan)
-        : "");
+  const wantsConcreteThreeJobs = isConcreteThreeJobsRequest(userMessage);
+
+const extraInstructions =
+  overrideInstruction ||
+  (isJobSuggestionMode && wantsConcreteThreeJobs
+    ? buildConcreteThreeJobsInstruction(profile, selectedPlan || "A")
+    : isJobSuggestionMode && isFollowup
+    ? buildJobSuggestionFollowupInstruction(profile, selectedPlan || "A")
+    : isJobSuggestionMode
+    ? buildJobSuggestionInstruction(profile)
+    : isResumeCompleteMode
+    ? buildResumeCompleteInstruction(profile, summary, selectedPlan)
+    : isResumeMode
+    ? buildResumeInstruction(profile, summary, selectedPlan)
+    : isInterviewMode
+    ? buildInterviewInstruction(profile, summary, selectedPlan)
+    : "");
 
     const messages = [
       {
@@ -3647,6 +3798,38 @@ ${nextQuestion.question}`;
             await replyToLine(replyToken, reply);
             continue;
           }
+        }
+        // ===== 具体求人3件 =====
+        if (isConcreteThreeJobsRequest(userMessage)) {
+          const currentState = normalizeInterviewState(
+            updatedSession?.interview_state || session?.interview_state || {}
+          );
+
+          const selectedPlan =
+            currentState.selectedPlan ||
+            currentState.lastSelectedPlan ||
+            "A";
+
+          await upsertSession(userId, {
+            current_topic: "job_suggestion",
+            interview_state: {
+              ...currentState,
+              selectedPlan,
+              lastSelectedPlan: selectedPlan,
+              lastOutputType: "job_suggestion_concrete_3",
+            },
+          });
+
+          const reply = await askOpenAI(
+            userId,
+            userMessage,
+            "job_suggestion",
+            buildConcreteThreeJobsInstruction(updatedProfile, selectedPlan)
+          );
+
+          await saveMessage(userId, "assistant", reply);
+          await replyToLine(replyToken, reply);
+          continue;
         }
 
         // ===== 通常応答 =====
