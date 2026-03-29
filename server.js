@@ -3794,7 +3794,7 @@ if (selectedJob) {
         }
 
         // ===== A/B/C 選択後は、面接対策を即その案前提で返す =====
-        if (menuIntent === "interview") {
+  if (menuIntent === "interview") {
   const currentState = normalizeInterviewState(
     updatedSession?.interview_state || sessionBefore?.interview_state || {}
   );
@@ -3805,37 +3805,36 @@ if (selectedJob) {
     "A";
 
   await upsertSession(userId, {
-          await upsertSession(userId, {
-            current_topic: "interview",
-            interview_state: {
-              ...currentState,
-              selectedPlan,
-              lastSelectedPlan: selectedPlan,
-              lastOutputType: "interview",
-            },
-          });
+    current_topic: "interview",
+    current_stage: "interview",
+    interview_state: {
+      ...currentState,
+      selectedPlan,
+      lastSelectedPlan: selectedPlan,
+      lastOutputType: "interview",
+    },
+  });
 
-          const reply = await askOpenAI(userId, userMessage, "interview");
-
-          await saveMessage(userId, "assistant", reply);
-          await replyToLine(replyToken, reply);
-          continue;
-        }
+  const reply = await askOpenAI(userId, userMessage, "interview");
+  await saveMessage(userId, "assistant", reply);
+  await replyToLine(replyToken, reply);
+  continue;
+}
 
         // ===== 面接対策に入った後で「A案/B案/C案」だけ送っても切り替えられるようにする =====
         if (menuIntent === "interview" || resolvedTopic === "interview") {
           const planOnly = detectRequestedSuggestionLabel(userMessage);
           if (planOnly) {
             await upsertSession(userId, {
-              current_topic: "interview",
-　　　　　　　　 current_stage: "interview",
-              interview_state: {
-                ...currentState,
-                selectedPlan: planOnly,
-                lastSelectedPlan: planOnly,
-                lastOutputType: "interview",
-              },
-            });
+  current_topic: "interview",
+  current_stage: "interview",
+  interview_state: {
+    ...currentState,
+    selectedPlan: planOnly,
+    lastSelectedPlan: planOnly,
+    lastOutputType: "interview",
+  },
+});
 
             const reply = await askOpenAI(userId, userMessage, "interview");
             await saveMessage(userId, "assistant", reply);
