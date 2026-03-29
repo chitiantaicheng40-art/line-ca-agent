@@ -1041,96 +1041,35 @@ function mergeProfile(existing = {}, patch = {}) {
 }
 
 async function upsertSession(userId, patch = {}) {
-  if (!supabase) return null;
-
   const current = await getSession(userId);
-  const statePatch = buildSessionStatePatch(patch, current || {});
 
-  const payload = {
-    user_id: userId,
-    profile: mergeProfile(current?.profile || {}, patch.profile || {}),
-    summary:
-      patch.summary !== undefined ? patch.summary : current?.summary || null,
-
-    current_topic: statePatch.current_topic,
-    current_stage: statePatch.current_stage,
-    current_hypothesis_id: statePatch.current_hypothesis_id,
-    current_job_id: statePatch.current_job_id,
-    active_search_id: statePatch.active_search_id,
-
-    selected_job:
-      patch.selected_job !== undefined
-        ? patch.selected_job
-        : current?.selected_job || null,
-
-    interview_state:
-      patch.interview_state !== undefined
-        ? patch.interview_state
-        : current?.interview_state || {},
-
-    current_mode:
-      patch.current_mode !== undefined
-        ? patch.current_mode
-        : current?.current_mode || "normal",
-
-    is_paused:
-      patch.is_paused !== undefined
-        ? patch.is_paused
-        : current?.is_paused || false,
-
-    paused_state:
-      patch.paused_state !== undefined
-        ? patch.paused_state
-        : current?.paused_state || {},
-
-    company_templates:
-      patch.company_templates !== undefined
-        ? patch.company_templates
-        : current?.company_templates || {},
-
-    plan_type: patch.plan_type ?? current?.plan_type ?? "free",
-
-    usage_count:
-      typeof patch.usage_count === "number"
-        ? patch.usage_count
-        : current?.usage_count ?? 0,
-
-    updated_at: new Date().toISOString(),
-  };
-
-  const { data, error } = await supabase
-    .from("line_ca_sessions")
-    .upsert(payload, { onConflict: "user_id" })
-    .select()
-    .single();
-
-  if (error) {
-    console.error("Supabase upsertSession error:", error.message);
-    return null;
-  }
-
-  return {
-    ...data,
-    profile: normalizeProfile(data.profile || {}),
-    interview_state: normalizeInterviewState(data.interview_state || {}),
-    current_topic: data.current_topic || null,
-    current_stage:
-      normalizeSessionStage(data.current_stage) ||
-      deriveStageFromTopic(data.current_topic || null),
-    current_hypothesis_id: normalizeUuidLike(data.current_hypothesis_id),
-    current_job_id: normalizeUuidLike(data.current_job_id),
-    active_search_id: normalizeUuidLike(data.active_search_id),
-    selected_job: data.selected_job || null,
-    current_mode: data.current_mode || "normal",
-    is_paused: Boolean(data.is_paused),
-    paused_state: data.paused_state || {},
-    company_templates:
-      data.company_templates && typeof data.company_templates === "object"
-        ? data.company_templates
-        : {},
-  };
+  // 既存の upsertSession の中身
+}
+    
+async function saveCandidateHypothesis({
+  userId,
+  label,
+  title,
+  summary,
+  strengths = [],
+  concerns = [],
+}) {
+  ...
 }
 
+async function saveCandidateJob({
+  userId,
+  hypothesisId,
+  orderIndex,
+  title,
+  companyName,
+  summary,
+}) {
+  ...
+}
+
+// ===== Conversation History =====
+async function getRecentMessages(userId, limit = 10) {
 // ===== Conversation History =====
 async function getRecentMessages(userId, limit = 10) {
   if (!supabase) return [];
