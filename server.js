@@ -3603,10 +3603,7 @@ app.post("/webhook", async (req, res) => {
         );
 
         const menuIntent = detectMenuIntent(userMessage);
-        const selectedPlan = getSelectedPlanFromState(currentState);
-
-
-const resumeSelectedJob = detectSelectedJob(userMessage);
+       const selectedJob = detectSelectedJob(userMessage);
 
 if (selectedJob) {
   await upsertSession(userId, {
@@ -3617,7 +3614,6 @@ if (selectedJob) {
     },
   });
 }
-
         if (menuIntent === "show_menu") {
           const reply = getMainMenuText();
           await saveMessage(userId, "assistant", reply);
