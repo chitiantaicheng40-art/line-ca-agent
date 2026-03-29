@@ -30,6 +30,13 @@ const MOCK_INTERVIEW_QUESTIONS_BY_TYPE = {
     "なぜ営業職を続けたいと考えているのですか？",
   ],
 
+  revops: [
+    "なぜ営業から営業企画・RevOpsに挑戦したいのですか？",
+    "売上125%を達成した要因を、再現性のあるプロセスとして説明してください。",
+    "営業プロセスのどこにボトルネックがあるか、どのように特定しますか？",
+    "SFAやKPIをどのように使って営業組織を改善しますか？",
+  ],
+
   cs: [
     "これまで顧客の課題解決をした経験について教えてください。",
     "顧客の利用が進まない場合、どのように改善しますか？",
@@ -1231,12 +1238,13 @@ async function startMockInterview(
   });
 
   const typeLabelMap = {
-    common: "一般",
-    sales: "営業",
-    cs: "カスタマーサクセス",
-    planning: "営業企画・事業企画",
-    ra: "RA",
-  };
+  common: "一般",
+  sales: "営業",
+  revops: "営業企画・RevOps",
+  cs: "カスタマーサクセス",
+  planning: "営業企画・事業企画",
+  ra: "RA",
+};
 
   const strictnessLabelMap = {
     easy: "やさしめ",
