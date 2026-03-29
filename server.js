@@ -580,40 +580,47 @@ function isFollowupRequest(text = "") {
   ].includes(s);
 }
 
-function isNextRequest(text = "") {
-  const s = String(text || "").trim();
-  return ["次", "次へ", "続けて", "別案", "ほか"].includes(s);
-}
-
 function detectRequestedSuggestionLabel(text = "") {
   const s = String(text || "").trim().toUpperCase();
 
   if (
     s === "A" ||
+    s.includes(" A ") ||
+    s.startsWith("A ") ||
+    s.endsWith(" A") ||
     s.includes("Aが気になる") ||
     s.includes("Aを詳しく") ||
     s.includes("Aを深掘り") ||
-    s.includes("A案")
+    s.includes("A案") ||
+    s.includes("模擬面接 A")
   ) {
     return "A";
   }
 
   if (
     s === "B" ||
+    s.includes(" B ") ||
+    s.startsWith("B ") ||
+    s.endsWith(" B") ||
     s.includes("Bが気になる") ||
     s.includes("Bを詳しく") ||
     s.includes("Bを深掘り") ||
-    s.includes("B案")
+    s.includes("B案") ||
+    s.includes("模擬面接 B")
   ) {
     return "B";
   }
 
   if (
     s === "C" ||
+    s.includes(" C ") ||
+    s.startsWith("C ") ||
+    s.endsWith(" C") ||
     s.includes("Cが気になる") ||
     s.includes("Cを詳しく") ||
     s.includes("Cを深掘り") ||
-    s.includes("C案")
+    s.includes("C案") ||
+    s.includes("模擬面接 C")
   ) {
     return "C";
   }
