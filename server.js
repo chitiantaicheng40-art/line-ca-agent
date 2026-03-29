@@ -3919,12 +3919,12 @@ await upsertSession(userId, {
 
 対象:
 - selectedPlan: ${selectedPlan}
-- selectedJob: ${selectedJob}
+- resumeSelectedJob: ${resumeSelectedJob}
 
 以下の求人向けに、職務経歴書を作成してください。
 
 重要:
-- ${selectedJob} の内容だけを前提にする
+- ${resumeSelectedJob} の内容だけを前提にする
 - 他の求人の内容を混ぜない
 - profile / summary にある事実だけを使う
 - 実際に話していない経験や成果を追加しない
@@ -3941,7 +3941,7 @@ await upsertSession(userId, {
 - ・・・
 - ・・・
 
-【${selectedJob}向けに強調したい実績】
+【${resumeSelectedJob}向けに強調したい実績】
 - ・・・
 - ・・・
 - ・・・
