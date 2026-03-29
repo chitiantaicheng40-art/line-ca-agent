@@ -2209,32 +2209,37 @@ ${buildConditionStatusInstruction(profile)}
 `;
 }
 
-function buildJobSuggestionFollowupInstruction(profile = {}, label = "A") {
+function buildJobSuggestionFollowupInstruction(profile = {}, selectedPlan = "A") {
+  const planNameMap = {
+    A: "営業企画・RevOps / カスタマーサクセス企画",
+    B: "事業企画・BizOps / 新規事業開発",
+    C: "マーケティング企画 / パートナーセールス"
+  };
+
+  const currentPlanName =
+    planNameMap[selectedPlan] || "この案";
+
   return `
 今回は「求人提案の深掘り」です。
-ユーザーは ${label} 案を詳しく見たい、またはおすすめ順に深掘りしたいと考えています。
+ユーザーは ${selectedPlan} 案を詳しく見たいと考えています。
 
 重要ルール：
 - 前回のA/B/C提案全文を繰り返さない
-- 謝罪文は書かない
-- 冒頭は自然に
-- 今回は ${label} 案だけを深掘りする
+- 今回は ${selectedPlan} 案だけを深掘りする
 - profile にない事実は断定しない
 - ユーザーが明示していない経験は断定しない
-- 「〜経験を活かせる」と言い切れない場合は、「〜志向と親和性が高い」「〜に挑戦しやすい」と表現する
-- LINEで読みやすくする
-- 3案全部を再掲しない
-
-案の対応：
-- A = 営業企画 / カスタマーサクセス（SaaS企業）
-- B = 事業企画 / 新規事業開発（人材業界）
-- C = マーケティング企画 / SaaSの営業企画
+- 別業種・別職種の場合は、その職種に合わせて内容を変える
+- 「営業企画・RevOps」に固定しない
+- LINEで読みやすく、箇条書きを中心にする
+- 最後は必ず次アクションを出す
+- 次アクションは selectedPlan を使って動的に出す
 
 出力フォーマット：
-ありがとうございます。まずは ${label} 案を深掘りします。
+
+ありがとうございます。まずは ${selectedPlan} 案を深掘りします。
 
 【今回深掘りする案】
-${label}
+${selectedPlan}. ${currentPlanName}
 
 【向いている人】
 - ・・・
@@ -2261,8 +2266,8 @@ ${label}
 
 【次に進めます】
 1. 具体求人3件を出す
-2. ${selectedPlan || "この案"}向けの職務経歴書を作る
-3. ${selectedPlan || "この案"}向けの面接対策をする
+2. ${selectedPlan}向けの職務経歴書を作る
+3. ${selectedPlan}向けの面接対策をする
 4. 模擬面接を始める
 
 または
