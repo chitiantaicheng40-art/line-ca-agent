@@ -3812,6 +3812,66 @@ ${nextQuestion.question}`;
             continue;
           }
         }
+
+        }
+
+        // ===== 求人別 職務経歴書 =====
+        if (isSpecificJobResumeRequest(userMessage)) {
+          const currentState = normalizeInterviewState(
+            updatedSession?.interview_state || session?.interview_state || {}
+          );
+
+          const selectedPlan =
+            currentState.selectedPlan ||
+            currentState.lastSelectedPlan ||
+            "A";
+
+          await upsertSession(userId, {
+            current_topic: "resume",
+            interview_state: {
+              ...currentState,
+              selectedPlan,
+              lastSelectedPlan: selectedPlan,
+              lastOutputType: "resume_specific_job",
+            },
+          });
+
+          const reply = await askOpenAI(
+            userId,
+            userMessage,
+            "resume",
+            `
+今回は特定求人向けの職務経歴書作成です。
+
+重要：
+- ユーザーが指定した求人1/2/3に合わせる
+- その求人に受かりやすいように、経験の見せ方・強み・職務要約を最適化する
+- profile にない事実は足さない
+- 実績は数値で見せる
+- LINEで読みやすく出す
+
+出力形式：
+【職務要約】
+...
+
+【活かせる経験】
+- ...
+- ...
+
+【求人向けに強調したい実績】
+- ...
+- ...
+
+【職務経歴書にそのまま入れる文章】
+...
+`
+          );
+
+          await saveMessage(userId, "assistant", reply);
+          await replyToLine(replyToken, reply);
+          continue;
+        }
+
         // ===== 具体求人3件 =====
         if (isConcreteThreeJobsRequest(userMessage)) {
           const currentState = normalizeInterviewState(
