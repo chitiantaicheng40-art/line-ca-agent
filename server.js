@@ -3829,61 +3829,96 @@ ${nextQuestion.question}`;
         }
 
         // ===== 求人別 職務経歴書 =====
-        if (isSpecificJobResumeRequest(userMessage)) {
-          const currentStateForResume = normalizeInterviewState(
-            updatedSession?.interview_state || session?.interview_state || {}
-          );
+if (isSpecificJobResumeRequest(userMessage)) {
+  const currentStateForResume = normalizeInterviewState(
+    updatedSession?.interview_state || session?.interview_state || {}
+  );
 
-          const selectedPlan =
-            currentStateForResume.selectedPlan ||
-            currentStateForResume.lastSelectedPlan ||
-            "A";
+  const selectedPlan =
+    currentStateForResume.selectedPlan ||
+    currentStateForResume.lastSelectedPlan ||
+    "A";
 
-          await upsertSession(userId, {
-            current_topic: "resume",
-            interview_state: {
-              ...currentStateForResume,
-              selectedPlan,
-              lastSelectedPlan: selectedPlan,
-              lastOutputType: "resume_specific_job",
-            },
-          });
+  let selectedJob = "求人1";
 
-          const reply = await askOpenAI(
-            userId,
-            userMessage,
-            "resume",
-            `
+  if (userMessage.includes("求人2")) {
+    selectedJob = "求人2";
+  } else if (userMessage.includes("求人3")) {
+    selectedJob = "求人3";
+  }
+
+  await upsertSession(userId, {
+    current_topic: "resume",
+    selected_job: selectedJob,
+    interview_state: {
+      ...currentStateForResume,
+      selectedPlan,
+      lastSelectedPlan: selectedPlan,
+      selectedJob,
+      lastOutputType: "resume_specific_job",
+    },
+  });
+
+  const reply = await askOpenAI(
+    userId,
+    userMessage,
+    "resume",
+    `
 今回は特定求人向けの職務経歴書作成です。
 
-重要：
-- ユーザーが指定した求人1/2/3に合わせる
-- その求人に受かりやすいように、経験の見せ方・強み・職務要約を最適化する
-- profile にない事実は足さない
-- 実績は数値で見せる
-- LINEで読みやすく出す
+対象:
+- selectedPlan: ${selectedPlan}
+- selectedJob: ${selectedJob}
 
-出力形式：
+以下の求人向けに、職務経歴書を作成してください。
+
+重要:
+- ${selectedJob} の内容だけを前提にする
+- 他の求人の内容を混ぜない
+- profile / summary にある事実だけを使う
+- 実際に話していない経験や成果を追加しない
+- その求人で評価される経験を、事実ベースで強調する
+- LINEで読みやすく、見出し付きにする
+
+出力形式:
+
 【職務要約】
-...
+2〜4行
 
 【活かせる経験】
-- ...
-- ...
+- ・・・
+- ・・・
+- ・・・
 
-【求人向けに強調したい実績】
-- ...
-- ...
+【${selectedJob}向けに強調したい実績】
+- ・・・
+- ・・・
+- ・・・
 
 【職務経歴書にそのまま入れる文章】
-...
-`
-          );
+職務要約
+- ・・・
 
-          await saveMessage(userId, "assistant", reply);
-          await replyToLine(replyToken, reply);
-          continue;
-        }
+職務経歴
+1）
+- ・・・
+
+2）
+- ・・・
+
+強み・スキル
+- ・・・
+
+不足情報があれば最後に
+「不足している情報」
+として1〜3個だけ書く。
+`
+  );
+
+  await saveMessage(userId, "assistant", reply);
+  await replyToLine(replyToken, reply);
+  continue;
+}
 
         // ===== 具体求人3件 =====
         if (isConcreteThreeJobsRequest(userMessage)) {
