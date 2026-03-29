@@ -3239,11 +3239,25 @@ app.post("/webhook", async (req, res) => {
         }
 
         // ===== 模擬面接開始 =====
-        if (detectMockInterviewCommand(userMessage)) {
-          await saveMessage(userId, "user", userMessage);
-          await startMockInterview(userId, replyToken, sessionBefore, userMessage);
-          continue;
-        }
+      if (detectMockInterviewCommand(userMessage) || menuIntent === "mock_interview") {
+  const requestedLabel = detectRequestedSuggestionLabel(userMessage);
+  const latestSession = await getSession(userId);
+  const latestState = normalizeInterviewState(latestSession?.interview_state || {});
+
+  if (requestedLabel) {
+    await upsertSession(userId, {
+      interview_state: {
+        ...latestState,
+        selectedPlan: requestedLabel,
+        lastSelectedPlan: requestedLabel,
+      },
+    });
+  }
+
+  const refreshedSession = await getSession(userId);
+  await startMockInterview(userId, replyToken, refreshedSession, userMessage);
+  continue;
+}
 
         // ===== 模擬面接中の回答処理 =====
         if (
