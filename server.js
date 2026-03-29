@@ -30,6 +30,13 @@ const MOCK_INTERVIEW_QUESTIONS_BY_TYPE = {
     "なぜ営業職を続けたいと考えているのですか？",
   ],
 
+  revops: [
+    "なぜ営業から営業企画・RevOpsに挑戦したいのですか？",
+    "売上125%を達成した要因を、再現性のあるプロセスとして説明してください。",
+    "営業プロセスのどこにボトルネックがあるか、どのように特定しますか？",
+    "SFAやKPIをどのように使って営業組織を改善しますか？",
+  ],
+
   cs: [
     "これまで顧客の課題解決をした経験について教えてください。",
     "顧客の利用が進まない場合、どのように改善しますか？",
@@ -165,36 +172,62 @@ async function replyToLine(replyToken, text) {
   }
 }
 
+// ===== LINE Loading =====
+async function showLineLoading(userId, seconds = 10) {
+  try {
+    const allowed = [5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60];
+    const loadingSeconds = allowed.includes(seconds) ? seconds : 10;
+
+    await axios.post(
+      "https://api.line.me/v2/bot/chat/loading/start",
+      {
+        chatId: userId,
+        loadingSeconds,
+      },
+      {
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${LINE_CHANNEL_ACCESS_TOKEN}`,
+        },
+      }
+    );
+  } catch (error) {
+    console.error("LINE loading error:", error.response?.data || error.message);
+  }
+}
+
 // ===== Menu Text =====
 function getMainMenuText() {
-  return `途中で話を変えても大丈夫です。
+  return `途中で話題を変えても大丈夫です。
 
-今できること👇
-① 自己分析
-② 求人提案
-③ 職務経歴書・経験整理
-④ 面接対策
-⑤ キャリア相談
-⑥ 模擬面接モード
-⑦ 企業テンプレ追加 / 一覧 / 読み込み
+【できること】
+1. 自己分析
+2. 求人提案
+3. 職務経歴書・経験整理
+4. 面接対策
+5. キャリア相談
+6. 模擬面接
+7. 企業テンプレ管理
 
-やりたいものをそのまま送ってください。
-例：自己分析、求人提案、面接対策、模擬面接
-例：模擬面接 営業企画 厳しめ
-例：模擬面接 RA 厳しめ
-例：模擬面接 リクルート RA 厳しめ
-例：模擬面接 SaaS 営業企画 厳しめ
-例：一旦止める
-例：再開
-例：企業テンプレ追加
-例：企業テンプレ一覧
-例：企業テンプレ: リクルート
-例：前回の模擬面接
-例：前回の改善点
-例：前回との比較
-例：この回答を添削して
-例：厳しめで添削
-例：通過率が上がる言い方にして`;
+【入力例】
+・自己分析
+・求人提案
+・職務経歴書を作りたい
+・面接対策
+・模擬面接 営業企画 厳しめ
+・模擬面接 リクルートRA 厳しめ
+・この回答を添削して
+・厳しめで添削
+・通過率が上がる言い方にして
+・企業テンプレ一覧
+
+【操作】
+・再開
+・一旦止める
+・企業テンプレ追加
+・企業テンプレ: リクルート
+
+まずは「求人提案」「自己分析」「模擬面接 営業企画 厳しめ」など、やりたいことをそのまま送ってください。`;
 }
 
 function getNextActionMenuByTopic(topic = "") {
@@ -338,7 +371,6 @@ function detectMenuIntent(text = "") {
 
 function detectMockInterviewCommand(text = "") {
   const t = (text || "").trim().toLowerCase();
-
   return (
     t.includes("模擬面接") ||
     t.includes("mock interview") ||
@@ -348,7 +380,6 @@ function detectMockInterviewCommand(text = "") {
 
 function detectMockInterviewReviewCommand(text = "") {
   const t = (text || "").trim();
-
   return (
     t.includes("前回の模擬面接") ||
     t.includes("前回の改善点") ||
@@ -393,8 +424,10 @@ function shouldUseStarterReply(userMessage = "", menuIntent = null) {
     "以下",
     "くらい",
     "未満",
+    "saaS",
     "SaaS",
     "人材",
+    "メーカー",
     "企業",
     "志望動機",
   ];
@@ -410,13 +443,9 @@ function detectFinishedTopic(text = "") {
   const t = (text || "").trim();
 
   if (!t) return null;
-
   if (t.includes("自己分析")) return "self_analysis";
   if (t.includes("求人提案") || t.includes("求人紹介")) return "job_suggestion";
-  if (t.includes("職務経歴書完成版") || t === "完成版") {
-    return "resume_complete";
-  }
-
+  if (t.includes("職務経歴書完成版") || t === "完成版") return "resume_complete";
   if (
     t.includes("職務経歴書") ||
     t.includes("経験整理") ||
@@ -424,16 +453,19 @@ function detectFinishedTopic(text = "") {
   ) {
     return "resume";
   }
-
+  if (t.includes("模擬面接")) return "mock_interview";
   if (t.includes("面接対策")) return "interview";
   if (t.includes("キャリア相談")) return "career";
-  if (t.includes("模擬面接")) return "mock_interview";
 
   return null;
 }
 
 function shouldAppendMenu(userText = "", aiText = "") {
   const t = (userText || "").trim();
+  if (!t) return false;
+
+  const intent = detectMenuIntent(t);
+  if (intent) return false;
 
   const shortTriggers = [
     "ありがとう",
@@ -449,690 +481,43 @@ function shouldAppendMenu(userText = "", aiText = "") {
   ];
 
   if (shortTriggers.some((w) => t.includes(w))) return true;
-
   if ((aiText || "").length > 350) return true;
 
   return false;
 }
 
+// ===== Topic State =====
 function isShortContinuationMessage(text = "") {
   const t = (text || "").trim();
+  if (!t) return false;
 
-  const continuationWords = [
-    "次",
-    "続き",
-    "お願い",
+  const continuationPhrases = [
     "お願いします",
+    "お願い",
+    "次",
     "次いこう",
     "次行こう",
+    "次いきましょう",
+    "次行きましょう",
     "続けて",
+    "続き",
     "それで",
+    "それやろう",
+    "それやりましょう",
     "やる",
     "進める",
     "進めましょう",
-    "OK",
-    "了解",
-    "問題ない",
-    "大丈夫",
+    "もっと",
+    "詳しく",
+    "具体的に",
+    "お願いします！",
+    "お願いいたします",
   ];
 
-  return continuationWords.some((w) => t === w || t.includes(w));
-}
+  if (continuationPhrases.includes(t)) return true;
+  if (t.length <= 12 && continuationPhrases.some((p) => t.includes(p))) return true;
 
-function resolveCurrentTopic(userMessage = "", currentTopic = "") {
-  const intent = detectMenuIntent(userMessage);
-
-  if (intent) return intent;
-
-  if (isShortContinuationMessage(userMessage) && currentTopic) {
-    return currentTopic;
-  }
-
-  return currentTopic;
-}
-
-// ===== Session =====
-async function getSession(userId) {
-  if (!supabase) {
-    return {
-      user_id: userId,
-      profile: {},
-      summary: "",
-      current_topic: null,
-      interview_state: {},
-      review_history: [],
-      company_templates: [],
-    };
-  }
-
-  const { data } = await supabase
-    .from("line_ca_sessions")
-    .select("*")
-    .eq("user_id", userId)
-    .single();
-
-  if (!data) {
-    return {
-      user_id: userId,
-      profile: {},
-      summary: "",
-      current_topic: null,
-      interview_state: {},
-      review_history: [],
-      company_templates: [],
-    };
-  }
-
-  return {
-    ...data,
-    profile: data.profile || {},
-    interview_state: data.interview_state || {},
-    review_history: data.review_history || [],
-    company_templates: data.company_templates || [],
-  };
-}
-
-async function saveSession(userId, updates) {
-  if (!supabase) return;
-
-  await supabase.from("line_ca_sessions").upsert({
-    user_id: userId,
-    ...updates,
-    updated_at: new Date().toISOString(),
-  });
-}
-
-// ===== Mock Interview Helper =====
-function buildMockInterviewQuestions(message = "") {
-  const t = message.toLowerCase();
-
-  if (t.includes("ra")) {
-    return MOCK_INTERVIEW_QUESTIONS_BY_TYPE.ra;
-  }
-
-  if (t.includes("営業企画") || t.includes("planning")) {
-    return MOCK_INTERVIEW_QUESTIONS_BY_TYPE.planning;
-  }
-
-  if (t.includes("営業")) {
-    return MOCK_INTERVIEW_QUESTIONS_BY_TYPE.sales;
-  }
-
-  if (t.includes("cs")) {
-    return MOCK_INTERVIEW_QUESTIONS_BY_TYPE.cs;
-  }
-
-  return MOCK_INTERVIEW_QUESTIONS_BY_TYPE.common;
-}
-
-function buildMockInterviewStartMessage(questions) {
-  return `模擬面接を始めます。
-
-まずは以下の質問からです。
-
-1問目：
-${questions[0]}
-
-回答してください。`;
-}
-
-async function evaluateInterviewAnswers(answers = [], questions = []) {
-  const joined = answers
-    .map((a, i) => `質問: ${questions[i]}\n回答: ${a}`)
-    .join("\n\n");
-
-  const prompt = `
-あなたは一流のキャリアアドバイザーです。
-以下の模擬面接の回答を厳しめに評価してください。
-
-【観点】
-- 良い点
-- 改善点
-- 通過率を上げるための具体的な言い換え
-- 総評
-
-${joined}
-`;
-
-  const response = await openai.chat.completions.create({
-    model: OPENAI_MODEL,
-    messages: [{ role: "user", content: prompt }],
-  });
-
-  return response.choices[0].message.content;
-}
-
-// ===== Review Comparison =====
-function buildInterviewHistoryText(history = []) {
-  if (!history.length) {
-    return "模擬面接履歴がまだありません。";
-  }
-
-  const latest = history[history.length - 1];
-
-  return `前回の模擬面接レビュー
-
-${latest.review}`;
-}
-
-function buildInterviewImprovementText(history = []) {
-  if (!history.length) {
-    return "模擬面接履歴がまだありません。";
-  }
-
-  const latest = history[history.length - 1];
-
-  return `前回の改善点
-
-${latest.improvements || latest.review}`;
-}
-
-function buildInterviewCompareText(history = []) {
-  if (history.length < 2) {
-    return "比較できるだけの模擬面接履歴がまだありません。";
-  }
-
-  const previous = history[history.length - 2];
-  const latest = history[history.length - 1];
-
-  return `前回との比較
-
-【前回】
-${previous.review}
-
-【今回】
-${latest.review}`;
-}
-
-function cleanJobSuggestionLead(text = "") {
-  let s = String(text || "").trim();
-
-  const unwantedLeads = [
-    /^失礼いたしました！?\s*/u,
-    /^申し訳ありませんが、?\s*/u,
-    /^以下の形式で再度求人提案をさせていただきます。?\s*/u,
-    /^再度求人提案します。?\s*/u,
-    /^改めて求人提案します。?\s*/u,
-    /^それでは、?再度ご提案します。?\s*/u,
-  ];
-
-  for (const pattern of unwantedLeads) {
-    s = s.replace(pattern, "").trim();
-  }
-
-  const allowedLead =
-    "ありがとうございます！あなたの希望条件に基づいて、以下の求人提案を考えてみました。";
-
-  const startIndex = s.indexOf("【A. 安定寄り】");
-
-  if (startIndex >= 0) {
-    return `${allowedLead}\n\n${s.slice(startIndex).trim()}`;
-  }
-
-  return s;
-}
-
-// ===== Safe JSON Helpers =====
-function stripCodeFences(text = "") {
-  return String(text || "")
-    .replace(/^```json\s*/i, "")
-    .replace(/^```\s*/i, "")
-    .replace(/\s*```$/i, "")
-    .trim();
-}
-
-function extractFirstJsonObject(text = "") {
-  const s = String(text || "");
-  const start = s.indexOf("{");
-  if (start === -1) return null;
-
-  let depth = 0;
-  let inString = false;
-  let escaped = false;
-
-  for (let i = start; i < s.length; i++) {
-    const ch = s[i];
-
-    if (escaped) {
-      escaped = false;
-      continue;
-    }
-
-    if (ch === "\\") {
-      escaped = true;
-      continue;
-    }
-
-    if (ch === '"') {
-      inString = !inString;
-      continue;
-    }
-
-    if (inString) continue;
-
-    if (ch === "{") depth++;
-    if (ch === "}") depth--;
-
-    if (depth === 0) {
-      return s.slice(start, i + 1);
-    }
-  }
-
-  return null;
-}
-
-function sanitizeProfilePatch(raw = {}) {
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
-
-  const allowedKeys = new Set([
-    "experience_keywords",
-    "interest_keywords",
-    "desired_salary_man",
-    "work_style_note",
-    "ng_note",
-    "strength_note",
-    "reason_note",
-    "change_timing",
-    "desired_location",
-    "minimum_salary",
-    "office_attendance",
-    "preferred_industries",
-    "avoid_points_in_current_job",
-  ]);
-
-  const cleaned = {};
-
-  for (const [key, value] of Object.entries(raw)) {
-    if (!allowedKeys.has(key)) continue;
-
-    if (
-      key === "experience_keywords" ||
-      key === "interest_keywords" ||
-      key === "preferred_industries" ||
-      key === "avoid_points_in_current_job"
-    ) {
-      if (Array.isArray(value)) {
-        const arr = value
-          .map((v) => String(v || "").trim())
-          .filter(Boolean)
-          .slice(0, 10);
-        if (arr.length > 0) cleaned[key] = arr;
-      } else {
-        const str = String(value || "").trim();
-        if (str) cleaned[key] = [str.slice(0, 200)];
-      }
-      continue;
-    }
-
-    if (key === "desired_salary_man") {
-      const n = Number(value);
-      if (Number.isFinite(n) && n > 0) {
-        cleaned[key] = Math.round(n);
-      }
-      continue;
-    }
-
-    if (key === "change_timing") {
-      const normalized = String(value || "").trim().toLowerCase();
-      if (["high", "medium", "low"].includes(normalized)) {
-        cleaned[key] = normalized;
-      }
-      continue;
-    }
-
-    const str = String(value || "").trim();
-    if (str) {
-      cleaned[key] = str.slice(0, 500);
-    }
-  }
-
-  return cleaned;
-}
-
-function safeParseProfilePatch(content = "") {
-  const candidates = [
-    String(content || "").trim(),
-    stripCodeFences(content),
-    extractFirstJsonObject(content),
-    extractFirstJsonObject(stripCodeFences(content)),
-  ].filter(Boolean);
-
-  for (const candidate of candidates) {
-    try {
-      const parsed = JSON.parse(candidate);
-      return sanitizeProfilePatch(parsed);
-    } catch (e) {
-      // continue
-    }
-  }
-
-  return {};
-}
-
-// ===== Summary Helpers =====
-function sanitizeSummary(text = "") {
-  return String(text || "")
-    .replace(/^```[\s\S]*?```$/g, "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 500);
-}
-
-async function generateUserSummary(profile = {}, existingSummary = "", userMessage = "") {
-  try {
-    const response = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      temperature: 0.2,
-      messages: [
-        {
-          role: "system",
-          content: `
-あなたはキャリアアドバイザーのための要約AIです。
-ユーザーの転職プロフィール要約を、短く自然な日本語で1〜3文にまとめてください。
-
-ルール：
-- 日本語のみ
-- 1〜3文
-- 事実ベース
-- 推測しない
-- 未確定な内容は「〜意向」「〜希望」「〜可能性がある」など柔らかく表現
-- 年収、職種志向、働き方、転職温度感、強み・懸念があれば優先
-- 冗長にしない
-- 400文字以内
-`,
-        },
-        {
-          role: "user",
-          content: `既存summary:
-${existingSummary || "なし"}
-
-現在profile:
-${JSON.stringify(profile, null, 2)}
-
-今回の発話:
-${userMessage}`,
-        },
-      ],
-    });
-
-    const text = response.choices?.[0]?.message?.content || "";
-    return sanitizeSummary(text);
-  } catch (error) {
-    console.error("generateUserSummary error:", error.response?.data || error.message);
-    return sanitizeSummary(existingSummary || "");
-  }
-}
-
-// ===== AI Profile Extraction =====
-async function extractProfilePatchWithAI(userMessage) {
-  try {
-    const response = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      temperature: 0,
-      messages: [
-        {
-          role: "system",
-          content: `
-あなたはキャリアアドバイザー向けの情報抽出AIです。
-ユーザーの発話から、転職プロフィールとして保存すべき情報だけをJSONで抽出してください。
-
-出力ルール：
-- 必ずJSONオブジェクトのみを返す
-- コードブロックは使わない
-- 情報がない項目は出さない
-- 推測しない
-- 配列は文字列配列
-- 年収は「万円」の整数で返す
-- 日本語で返す
-
-使ってよいキー：
-experience_keywords
-interest_keywords
-desired_salary_man
-work_style_note
-ng_note
-strength_note
-reason_note
-change_timing
-desired_location
-minimum_salary
-office_attendance
-preferred_industries
-avoid_points_in_current_job
-
-補足：
-- preferred_industries は配列
-- avoid_points_in_current_job は配列
-- minimum_salary はユーザー表現のままでよい
-- desired_location は勤務地希望
-- office_attendance は出社頻度
-- 現職の不満や避けたい働き方は avoid_points_in_current_job に入れる
-
-change_timing は "high" / "medium" / "low" のいずれか
-`,
-        },
-        {
-          role: "user",
-          content: userMessage,
-        },
-      ],
-    });
-
-    const content = response.choices?.[0]?.message?.content || "{}";
-    const parsed = safeParseProfilePatch(content);
-
-    if (!parsed || Object.keys(parsed).length === 0) {
-      console.warn("Profile patch parse failed. raw content:", content);
-      return {};
-    }
-
-    return parsed;
-  } catch (error) {
-    console.error(
-      "extractProfilePatchWithAI error:",
-      error.response?.data || error.message
-    );
-    return {};
-  }
-}
-
-async function updateUserProfile(userId, userMessage) {
-  const existing = await getSession(userId);
-  const existingProfile = normalizeProfile(existing?.profile || {});
-  const existingSummary = existing?.summary || "";
-
-  const newPatch = await extractProfilePatchWithAI(userMessage);
-
-  let mergedProfile = existingProfile;
-
-  if (newPatch && Object.keys(newPatch).length > 0) {
-    mergedProfile = mergeProfile(existingProfile, newPatch);
-  }
-
-  const nextSummary = await generateUserSummary(
-    mergedProfile,
-    existingSummary,
-    userMessage
-  );
-
-  const updatedSession = await upsertSession(userId, {
-    profile: mergedProfile,
-    summary: nextSummary || existingSummary || null,
-  });
-
-  return updatedSession || {
-    profile: mergedProfile,
-    summary: nextSummary || existingSummary || "",
-    interview_state: existing?.interview_state || {},
-    current_topic: existing?.current_topic || null,
-    current_mode: existing?.current_mode || "normal",
-    is_paused: existing?.is_paused || false,
-    paused_state: existing?.paused_state || {},
-    company_templates: existing?.company_templates || {},
-  };
-}
-
-// ===== System Prompt =====
-const SYSTEM_PROMPT = `
-あなたは優秀なキャリアアドバイザーです。
-ユーザーに対して、自然で親しみやすく、でも実務的に役立つ回答をしてください。
-
-対応できること：
-- 自己分析
-- 求人提案
-- 職務経歴書・経験整理
-- 職務経歴書完成版
-- 面接対策
-- キャリア相談
-- 模擬面接の前後フォロー
-- 回答添削
-
-共通ルール：
-- 会話の途中でテーマが変わっても自然に対応する
-- ユーザーが迷っていそうなら、今できることを短く案内する
-- 「求人検索」ではなく「求人提案」という表現を使う
-- 回答はLINEで読みやすい長さと改行を意識する
-- 上から目線にならない
-- 不明点は決めつけず、確認ベースで伝える
-- できるだけ次の一歩が明確になるように返す
-- 保存済みプロフィールは自然に活かすが、未確定情報として扱う
-- 求人提案では、保存済みの希望勤務地・年収下限・出社頻度・業界希望・避けたいことがあれば優先して反映する
-`;
-
-// ===== OpenAI Ask =====
-async function askOpenAI(userId, userMessage, forcedTopic = null, overrideInstruction = "") {
-  try {
-    const history = await getRecentMessages(userId, 12);
-    const session = await getSession(userId);
-    const profile = normalizeProfile(session?.profile || {});
-    const summary = session?.summary || "";
-    const currentTopic = forcedTopic || session?.current_topic || null;
-
-    const isJobSuggestionMode =
-      isJobSuggestionContext(userMessage) || currentTopic === "job_suggestion";
-
-    const isResumeMode = currentTopic === "resume";
-    const isResumeCompleteMode = currentTopic === "resume_complete";
-    const isInterviewMode = currentTopic === "interview";
-
-    const sessionInterviewState = normalizeInterviewState(session?.interview_state || {});
-    const selectedPlan =
-      sessionInterviewState.selectedPlan || sessionInterviewState.lastSelectedPlan || null;
-
-    const isFollowup =
-      currentTopic === "job_suggestion" && isFollowupRequest(userMessage);
-
-    const extraInstructions =
-      overrideInstruction ||
-      (isJobSuggestionMode && isFollowup
-        ? buildJobSuggestionFollowupInstruction(profile, selectedPlan || "A")
-        : isJobSuggestionMode
-        ? buildJobSuggestionInstruction(profile)
-        : isResumeCompleteMode
-        ? buildResumeCompleteInstruction(profile, summary, selectedPlan)
-        : isResumeMode
-        ? buildResumeInstruction(profile, summary, selectedPlan)
-        : isInterviewMode
-        ? buildInterviewInstruction(profile, summary, selectedPlan)
-        : "");
-
-    const messages = [
-      {
-        role: "system",
-        content: SYSTEM_PROMPT,
-      },
-      {
-        role: "system",
-        content: `
-このユーザーの現在プロフィールです。
-求人提案では必ずこの内容を優先して反映してください。
-
-profile:
-${JSON.stringify(profile, null, 2)}
-
-特に以下は最優先です：
-- preferred_industries
-- desired_location
-- minimum_salary
-- office_attendance
-- avoid_points_in_current_job
-
-未確定情報は断定せず、確認ベースで扱ってください。
-`,
-      },
-      {
-        role: "system",
-        content:
-          "このユーザーの現在summaryです。自然に参考にしてください。古そう・不確実そうなら確認しながら使ってください。\n" +
-          summary,
-      },
-      ...(currentTopic
-        ? [
-            {
-              role: "system",
-              content: `現在の会話テーマは「${currentTopic}」です。短い継続メッセージ（例: お願いします、次、続けて）はこのテーマの続きとして扱ってください。`,
-            },
-          ]
-        : []),
-      ...(extraInstructions
-        ? [{ role: "system", content: extraInstructions }]
-        : []),
-      ...history.map((m) => ({
-        role: m.role,
-        content: m.content,
-      })),
-      { role: "user", content: userMessage },
-    ];
-
-    const response = await openai.chat.completions.create({
-      model: OPENAI_MODEL,
-      messages,
-    });
-
-    let reply =
-      response.choices?.[0]?.message?.content || "うまく回答を作れませんでした。";
-
-    if (
-      isJobSuggestionMode &&
-      !overrideInstruction &&
-      !isFollowup &&
-      !isValidJobSuggestionFormat(reply)
-    ) {
-      const retryMessages = [
-        ...messages,
-        {
-          role: "assistant",
-          content: reply,
-        },
-        {
-          role: "user",
-          content:
-            "出力形式が不足しています。謝罪文・言い訳・「再度」などの前置きは書かず、自然な導入文は「ありがとうございます！あなたの希望条件に基づいて、以下の求人提案を考えてみました。」のみ許可します。必ずA/B/Cの3案すべてに「一致度」「応募優先度」「一致理由」「応募優先度の理由」「懸念点」を入れ、最後に【おすすめ応募順】を付けて完全な形式で再出力してください。",
-        },
-      ];
-
-      const retryResponse = await openai.chat.completions.create({
-        model: "gpt-4o-mini",
-        messages: retryMessages,
-        temperature: 0.2,
-      });
-
-      const retried = retryResponse.choices?.[0]?.message?.content || reply;
-
-      if (isValidJobSuggestionFormat(retried)) {
-        reply = retried;
-      }
-    }
-
-    if (isJobSuggestionMode && !overrideInstruction && !isFollowup) {
-      reply = cleanJobSuggestionLead(reply);
-    }
-
-    return reply;
-  } catch (error) {
-    console.error("OpenAI error:", error.response?.data || error.message);
-    return "すみません、今ちょっと調子が悪いです。もう一度送ってください。";
-  }
+  return false;
 }
 
 function resolveCurrentTopic(userMessage = "", sessionCurrentTopic = null) {
@@ -1761,13 +1146,13 @@ function getMockInterviewTypeAndStrictness(userMessage = "", selectedPlan = null
   let type = "common";
   let companyTemplate = null;
 
-  if (selectedPlan === "A") {
-    type = "revops";
-  } else if (selectedPlan === "B") {
-    type = "planning";
-  } else if (selectedPlan === "C") {
-    type = "cs";
-  }
+if (selectedPlan === "A") {
+  type = "revops";
+} else if (selectedPlan === "B") {
+  type = "planning";
+} else if (selectedPlan === "C") {
+  type = "cs";
+}
 
   if (
     lower.includes("リクルート") &&
@@ -1820,12 +1205,11 @@ async function startMockInterview(
   userMessage = ""
 ) {
   const currentState = normalizeInterviewState(sessionBefore?.interview_state || {});
-  const { type, strictness, companyTemplate } =
-    getMockInterviewTypeAndStrictness(
-      userMessage,
-      currentState.selectedPlan || currentState.lastSelectedPlan || null
-    );
-
+　const { type, strictness, companyTemplate } =
+  getMockInterviewTypeAndStrictness(
+    userMessage,
+    currentState.selectedPlan || currentState.lastSelectedPlan || null
+  );
   const customTemplateName =
     !companyTemplate && currentState.companyTemplateName
       ? currentState.companyTemplateName
@@ -1851,13 +1235,13 @@ async function startMockInterview(
   });
 
   const typeLabelMap = {
-    common: "一般",
-    sales: "営業",
-    revops: "営業企画・RevOps",
-    cs: "カスタマーサクセス",
-    planning: "営業企画・事業企画",
-    ra: "RA",
-  };
+  common: "一般",
+  sales: "営業",
+  revops: "営業企画・RevOps",
+  cs: "カスタマーサクセス",
+  planning: "営業企画・事業企画",
+  ra: "RA",
+};
 
   const strictnessLabelMap = {
     easy: "やさしめ",
@@ -1975,9 +1359,7 @@ async function generateMockInterviewFinalReview(
   summary = ""
 ) {
   try {
-    const answers = Array.isArray(interviewState?.answers)
-      ? interviewState.answers
-      : [];
+    const answers = Array.isArray(interviewState?.answers) ? interviewState.answers : [];
 
     const formatted = answers
       .map((item, i) => {
@@ -2085,24 +1467,23 @@ async function handleMockInterviewReview(userId, replyToken, userMessage) {
       );
       return;
     }
+if (userMessage.includes("前回との比較")) {
+  const history = Array.isArray(state.reviewHistory)
+    ? state.reviewHistory
+    : [];
 
-    if (userMessage.includes("前回との比較")) {
-      const history = Array.isArray(state.reviewHistory)
-        ? state.reviewHistory
-        : [];
+  if (history.length < 2) {
+    await replyToLine(
+      replyToken,
+      "比較できるだけの面接履歴がありません。2回以上模擬面接を実施してください。"
+    );
+    return;
+  }
 
-      if (history.length < 2) {
-        await replyToLine(
-          replyToken,
-          "比較できるだけの面接履歴がありません。2回以上模擬面接を実施してください。"
-        );
-        return;
-      }
+  const previous = history[history.length - 2].review;
+  const latest = history[history.length - 1].review;
 
-      const previous = history[history.length - 2].review;
-      const latest = history[history.length - 1].review;
-
-      const prompt = `
+  const prompt = `
 あなたは厳しめの面接官です。
 
 以下の2回分の模擬面接総評を比較し、
@@ -2127,30 +1508,29 @@ ${latest}
 3.
 `;
 
-      const completion = await openai.chat.completions.create({
-        model: OPENAI_MODEL,
-        temperature: 0.2,
-        messages: [
-          {
-            role: "system",
-            content:
-              "あなたは一流企業の採用面接官です。実務的に比較してください。",
-          },
-          {
-            role: "user",
-            content: prompt,
-          },
-        ],
-      });
+  const completion = await openai.chat.completions.create({
+    model: OPENAI_MODEL,
+    temperature: 0.2,
+    messages: [
+      {
+        role: "system",
+        content:
+          "あなたは一流企業の採用面接官です。実務的に比較してください。",
+      },
+      {
+        role: "user",
+        content: prompt,
+      },
+    ],
+  });
 
-      const compareText =
-        completion.choices?.[0]?.message?.content?.trim() ||
-        "比較を生成できませんでした。";
+  const compareText =
+    completion.choices?.[0]?.message?.content?.trim() ||
+    "比較を生成できませんでした。";
 
-      await saveMessage(userId, "assistant", compareText);
-      await replyToLine(replyToken, compareText);
-      return;
-    }
+  await replyToLine(replyToken, compareText);
+  return;
+}
 
     if (userMessage.includes("前回の模擬面接")) {
       const startIndex = Math.max(0, state.answers.length - 3);
@@ -2229,6 +1609,63 @@ ${result}`;
       return;
     }
 
+    if (userMessage.includes("前回との比較")) {
+      if (!state.answers || state.answers.length < 2) {
+        const reply =
+          "比較できる十分な模擬面接データがありません。複数回答後にお試しください。";
+        await saveMessage(userId, "assistant", reply);
+        await replyToLine(replyToken, reply);
+        return;
+      }
+
+      const prompt = `
+以下は模擬面接の最近の回答です。
+
+${state.answers
+  .slice(-2)
+  .map(
+    (item, index) =>
+      `【回答${index + 1}】
+質問: ${item.question}
+回答: ${item.answer}`
+  )
+  .join("\n\n")}
+
+この2つを比較し、
+- 良くなった点
+- まだ弱い点
+- 次回さらに改善するポイント
+
+を簡潔にまとめてください。
+`;
+
+      const completion = await openai.chat.completions.create({
+        model: OPENAI_MODEL,
+        messages: [
+          {
+            role: "system",
+            content:
+              "あなたは一流の面接コーチです。成長と改善点を具体的に比較してください。",
+          },
+          {
+            role: "user",
+            content: prompt,
+          },
+        ],
+      });
+
+      const result =
+        completion.choices?.[0]?.message?.content?.trim() ||
+        "比較結果を取得できませんでした。";
+
+      const reply = `【前回との比較】
+${result}`;
+
+      await saveMessage(userId, "assistant", reply);
+      await replyToLine(replyToken, reply);
+      return;
+    }
+
     const fallback =
       "前回の模擬面接 / 前回の改善点 / 前回との比較 のいずれかを送ってください。";
     await saveMessage(userId, "assistant", fallback);
@@ -2237,6 +1674,112 @@ ${result}`;
     console.error("handleMockInterviewReview error:", error);
 
     const reply = "前回の模擬面接データの取得中にエラーが発生しました。";
+    await saveMessage(userId, "assistant", reply);
+    await replyToLine(replyToken, reply);
+  }
+}
+
+async function handleAnswerPolish(userId, replyToken, userMessage) {
+  try {
+    const history = await getRecentMessages(userId, 12);
+    const session = await getSession(userId);
+    const profile = normalizeProfile(session?.profile || {});
+    const summary = session?.summary || "";
+
+    const recentUserMessages = history
+      .filter((m) => m.role === "user")
+      .map((m) => m.content)
+      .filter(Boolean);
+
+    let targetAnswer = "";
+    for (let i = recentUserMessages.length - 1; i >= 0; i--) {
+      const msg = recentUserMessages[i];
+      if (!detectAnswerPolishCommand(msg)) {
+        targetAnswer = msg;
+        break;
+      }
+    }
+
+    if (!targetAnswer) {
+      const reply =
+        "添削対象の回答が見つかりませんでした。先に回答文を送ったあとで「この回答を添削して」と送ってください。";
+      await saveMessage(userId, "assistant", reply);
+      await replyToLine(replyToken, reply);
+      return;
+    }
+
+    let toneInstruction = "実務的かつバランス良く添削してください。";
+    if (userMessage.includes("厳しめ")) {
+      toneInstruction =
+        "面接官視点で厳しめに添削し、弱い表現や抽象表現を明確に修正してください。";
+    } else if (
+      userMessage.includes("通過率が上がる") ||
+      userMessage.includes("面接向け") ||
+      userMessage.includes("面接用")
+    ) {
+      toneInstruction =
+        "面接通過率が上がるように、説得力・再現性・具体性を強めて添削してください。";
+    }
+
+    const prompt = `
+あなたは非常に優秀な面接コーチです。
+${toneInstruction}
+
+候補者プロフィール:
+${JSON.stringify(profile, null, 2)}
+
+候補者サマリー:
+${summary || "なし"}
+
+添削対象の回答:
+${targetAnswer}
+
+以下の形式で日本語で返してください。
+
+【元の回答の弱い点】
+- 2〜3点
+
+【改善のポイント】
+- 2〜3点
+
+【添削後の回答】
+- 面接でそのまま話せる自然な文章
+
+ルール:
+- 候補者が明示していない数値・成果・役職・KPIは創作しない
+- 抽象表現はなるべく具体化する
+- ただし事実にないことは足さない
+- 口頭で話しやすい長さにする
+`;
+
+    const completion = await openai.chat.completions.create({
+      model: OPENAI_MODEL,
+      messages: [
+        {
+          role: "system",
+          content:
+            "あなたは一流の面接コーチです。厳しくても建設的に回答添削を行ってください。",
+        },
+        {
+          role: "user",
+          content: prompt,
+        },
+      ],
+    });
+
+    const result =
+      completion.choices?.[0]?.message?.content?.trim() ||
+      "添削結果を生成できませんでした。";
+
+    const reply = `【回答添削】
+${result}`;
+
+    await saveMessage(userId, "assistant", reply);
+    await replyToLine(replyToken, reply);
+  } catch (error) {
+    console.error("handleAnswerPolish error:", error);
+
+    const reply = "回答添削中にエラーが発生しました。";
     await saveMessage(userId, "assistant", reply);
     await replyToLine(replyToken, reply);
   }
@@ -2253,46 +1796,44 @@ async function handleMockInterviewAnswer(
   const summary = session?.summary || "";
 
   if (userMessage.trim() === "終了") {
-    const endedState = {
-      ...interviewState,
-      mode: null,
-      isFinished: true,
-      lastOutputType: "mock_interview_end",
-    };
+  const endedState = {
+    ...interviewState,
+    mode: null,
+    isFinished: true,
+    lastOutputType: "mock_interview_end",
+  };
 
-    const finalReview = await generateMockInterviewFinalReview(
-      {
-        ...endedState,
-        answers: Array.isArray(interviewState.answers)
-          ? interviewState.answers
-          : [],
-      },
-      profile,
-      summary
-    );
+  const finalReview = await generateMockInterviewFinalReview(
+    {
+      ...endedState,
+      answers: Array.isArray(interviewState.answers) ? interviewState.answers : [],
+    },
+    profile,
+    summary
+  );
 
-    endedState.finalReview = finalReview;
+ endedState.finalReview = finalReview;
 
-    const reviewHistory = Array.isArray(endedState.reviewHistory)
-      ? endedState.reviewHistory
-      : [];
+const reviewHistory = Array.isArray(endedState.reviewHistory)
+  ? endedState.reviewHistory
+  : [];
 
-    reviewHistory.push({
-      createdAt: new Date().toISOString(),
-      review: finalReview,
-    });
+reviewHistory.push({
+  createdAt: new Date().toISOString(),
+  review: finalReview,
+});
 
-    endedState.reviewHistory = reviewHistory.slice(-5);
+endedState.reviewHistory = reviewHistory.slice(-5);
 
-    await upsertSession(userId, {
-      current_topic: null,
-      current_mode: "normal",
-      is_paused: false,
-      paused_state: {},
-      interview_state: endedState,
-    });
+await upsertSession(userId, {
+  current_topic: null,
+  current_mode: "normal",
+  is_paused: false,
+  paused_state: {},
+  interview_state: endedState,
+});
 
-    const reply = `模擬面接モードを終了しました。お疲れさまでした。
+  const reply = `模擬面接モードを終了しました。お疲れさまでした。
 
 ====================
 【途中終了時点の総評】
@@ -2301,10 +1842,10 @@ ${finalReview}
 ---
 ${getNextActionMenuByTopic("mock_interview")}`;
 
-    await saveMessage(userId, "assistant", reply);
-    await replyToLine(replyToken, reply);
-    return;
-  }
+  await saveMessage(userId, "assistant", reply);
+  await replyToLine(replyToken, reply);
+  return;
+}
 
   const questions = getQuestionsFromInterviewState(interviewState, session);
   const currentIndex = interviewState.questionIndex || 0;
@@ -2352,17 +1893,6 @@ ${getNextActionMenuByTopic("mock_interview")}`;
     );
 
     finalState.finalReview = finalReview;
-
-    const reviewHistory = Array.isArray(finalState.reviewHistory)
-      ? finalState.reviewHistory
-      : [];
-
-    reviewHistory.push({
-      createdAt: new Date().toISOString(),
-      review: finalReview,
-    });
-
-    finalState.reviewHistory = reviewHistory.slice(-5);
 
     await upsertSession(userId, {
       current_topic: null,
@@ -2487,7 +2017,6 @@ ${nextQuestion}`;
   await replyToLine(replyToken, reply);
 }
 
-// ===== Company Template =====
 async function handleCompanyTemplateAddStart(userId, replyToken, session) {
   await upsertSession(userId, {
     profile: {
@@ -2564,242 +2093,6 @@ async function handleCompanyTemplateList(userId, replyToken, session) {
 
   await saveMessage(userId, "assistant", text);
   await replyToLine(replyToken, text);
-}
-
-async function handleCompanyTemplateSelect(userId, replyToken, session, templateName) {
-  const templates = session?.company_templates || {};
-  const selected = templates[templateName];
-
-  if (!selected) {
-    const reply = `「${templateName}」の企業テンプレは見つかりませんでした。
-「企業テンプレ一覧」で確認してください。`;
-    await saveMessage(userId, "assistant", reply);
-    await replyToLine(replyToken, reply);
-    return;
-  }
-
-  await upsertSession(userId, {
-    interview_state: {
-      ...(session?.interview_state || {}),
-      companyTemplate: null,
-      companyTemplateName: templateName,
-      lastCompanyTemplate: templateName,
-      lastOutputType: "company_template_select",
-    },
-  });
-
-  const message = [
-    `企業テンプレ「${templateName}」を読み込みました。`,
-    `業界: ${selected.industry || "未設定"}`,
-    `訴求ポイント: ${(selected.appealPoints || []).join(" / ") || "未設定"}`,
-    `想定質問: ${(selected.mockQuestions || []).join(" / ") || "未設定"}`,
-    `メモ: ${selected.notes || "なし"}`,
-    "",
-    "模擬面接を始めるときは「模擬面接」と送ってください。",
-  ].join("\n");
-
-  await saveMessage(userId, "assistant", message);
-  await replyToLine(replyToken, message);
-}
-
-async function handleCompanyTemplateDeleteStart(userId, replyToken, session) {
-  await upsertSession(userId, {
-    profile: {
-      ...(session?.profile || {}),
-      waiting_company_template_delete: true,
-      waiting_company_template_input: false,
-    },
-  });
-
-  const reply =
-    "削除したい企業名を「削除: 企業名」の形式で送ってください。\n例: 削除: リクルート";
-  await saveMessage(userId, "assistant", reply);
-  await replyToLine(replyToken, reply);
-}
-
-async function handleCompanyTemplateDeleteExecute(
-  userId,
-  replyToken,
-  session,
-  userMessage
-) {
-  const companyName = String(userMessage || "").replace("削除:", "").trim();
-  const templates = { ...(session?.company_templates || {}) };
-
-  if (!templates[companyName]) {
-    const reply = `「${companyName}」の企業テンプレは見つかりませんでした。`;
-    await saveMessage(userId, "assistant", reply);
-    await replyToLine(replyToken, reply);
-    return;
-  }
-
-  delete templates[companyName];
-
-  await upsertSession(userId, {
-    company_templates: templates,
-    profile: {
-      ...(session?.profile || {}),
-      waiting_company_template_delete: false,
-    },
-    interview_state: {
-      ...(session?.interview_state || {}),
-      companyTemplateName:
-        session?.interview_state?.companyTemplateName === companyName
-          ? null
-          : session?.interview_state?.companyTemplateName || null,
-      lastOutputType: "company_template_delete",
-    },
-  });
-
-  const reply = `企業テンプレ「${companyName}」を削除しました。`;
-  await saveMessage(userId, "assistant", reply);
-  await replyToLine(replyToken, reply);
-}
-
-// ===== Job Suggestion Prompt Builders =====
-function buildConditionStatusInstruction(profile = {}) {
-  const p = normalizeProfile(profile);
-
-  return `
-このユーザーの希望条件の取得状況です。
-求人提案の最後に付ける【次に確認したいこと】では、未取得のものだけを書くこと。
-
-取得済み:
-- 希望勤務地: ${isFieldFilled(p.desired_location) ? "取得済み" : "未取得"}
-- 許容年収下限: ${isFieldFilled(p.minimum_salary) ? "取得済み" : "未取得"}
-- 出社頻度: ${isFieldFilled(p.office_attendance) ? "取得済み" : "未取得"}
-- 業界希望: ${isFieldFilled(p.preferred_industries) ? "取得済み" : "未取得"}
-- 現職で避けたいこと: ${isFieldFilled(p.avoid_points_in_current_job) ? "取得済み" : "未取得"}
-
-重要ルール:
-- 取得済みの項目は【次に確認したいこと】に絶対に書かない
-- 未取得項目がない場合は【次に確認したいこと】自体を書かない
-- 以下の項目は【次に確認したいこと】として勝手に追加しない
-  - どのくらい企画寄りに行きたいか
-  - マネジメントか専門性か
-  - 理想年収
-  - 業界追加希望
-  - リモート条件の再確認
-`;
-}
-
-function buildJobSuggestionInstruction(profile = {}) {
-  return `
-今回は「求人提案」として回答してください。
-
-出力ルール：
-- 冒頭に一文だけ自然な導入文を入れてよい
-- 導入文の例：
-  「ありがとうございます！あなたの希望条件に基づいて、以下の求人提案を考えてみました。」
-- ただし謝罪文・言い訳・「再度」「失礼しました」などの表現は禁止
-- LINEで読みやすい見出し付き
-- 必ず3パターンで提案する
-- 順番は以下で固定
-- 各案に必ず「一致度：xx%」をつける
-- 各案に必ず「応募優先度：高 / 中 / 低」をつける
-- 一致度は、業界・年収・勤務地・出社頻度・避けたいこと・経験との整合を踏まえて相対評価する
-- 応募優先度は、一致度だけでなく、選考通過しやすさ・再現性・未経験要素の少なさも踏まえてつける
-- 一致度と応募優先度は絶対に省略しない
-- A/B/Cの全案で必ず同じ形式を守る
-
-出力フォーマット：
-ありがとうございます！あなたの希望条件に基づいて、以下の求人提案を考えてみました。
-
-【A. 安定寄り】一致度：xx% / 応募優先度：高・中・低
-職種例：
-- ・・・
-- ・・・
-
-- おすすめ理由
-- 合う点
-- 一致理由
-- 応募優先度の理由
-- 懸念点
-
-【B. 成長寄り】一致度：xx% / 応募優先度：高・中・低
-職種例：
-- ・・・
-- ・・・
-
-- おすすめ理由
-- 合う点
-- 一致理由
-- 応募優先度の理由
-- 懸念点
-
-【C. バランス寄り】一致度：xx% / 応募優先度：高・中・低
-職種例：
-- ・・・
-- ・・・
-
-- おすすめ理由
-- 合う点
-- 一致理由
-- 応募優先度の理由
-- 懸念点
-
-【おすすめ応募順】
-A → B → C
-
-最後は必ず以下で締めること：
-
-気になる案があれば、A / B / C のどれかを送ってください。
-例：
-- Aが気になる
-- Bを詳しく知りたい
-- Cを深掘りしたい
-
-まだ迷う場合は「おすすめ順に詳しく」と送っていただければ、こちらで順番に深掘りします。
-
-最後は必要な場合のみ
-【次に確認したいこと】
-を付ける
-
-一致理由のルール：
-- できるだけ以下の観点で簡潔に書く
-  - 業界一致
-  - 年収条件との整合
-  - 出社頻度との整合
-  - 希望勤務地との整合
-  - 避けたい環境との相性
-- すべて無理に書かなくてよいが relevant なものは優先して書く
-
-応募優先度の理由のルール：
-- 高:
-  今の条件とのズレが少なく、選考通過率も比較的見込みやすい
-- 中:
-  魅力は大きいが、未経験要素や選考難易度に少しハードルがある
-- 低:
-  方向性としてはあり得るが、今の条件とのズレや難易度がやや高い
-- 各案ごとに、なぜ高・中・低なのかを一言で説明する
-
-追加ルール：
-- 実在求人の断定はしない
-- 今は「どういう求人が合いそうか」の提案でよい
-- ユーザーの profile と summary を優先して使う
-- 特に preferred_industries がある場合は、必ずその業界を前提に職種例・理由・合う点を書く
-- preferred_industries が ["SaaS","人材"] の場合は、SaaS企業・人材会社を前提にする
-- desired_location がある場合は勤務地に反映する
-- minimum_salary がある場合は年収条件に反映する
-- office_attendance がある場合は、出社頻度に合う求人だけを前提にする
-- avoid_points_in_current_job がある場合は、その要素を避けた求人として書く
-- avoid_points_in_current_job がある場合は、懸念点だけでなく「おすすめ理由」「合う点」「一致理由」にも反映し、その環境を避けやすい理由を書く
-- profile にない条件を勝手に補わない
-- ユーザーが明示していない経験は断定しない
-- 「〜経験を活かせる」と言い切れない場合は、「〜志向と親和性が高い」「〜に挑戦しやすい」と表現する
-- 3案の違いがはっきり分かるようにする
-- 必ずA/B/Cの順番で出す
-- 1案あたり長くしすぎない
-- LINEで読みやすいように、空行と箇条書きを使う
-- 各案の職種例は、可能なら業界名も入れる
-- 取得済み条件は【次に確認したいこと】に書かない
-- 未取得項目がない場合は【次に確認したいこと】を出さない
-- 「一致度」「応募優先度」が1つでも欠けたら不正な出力
-- 省略表現を使わず、A/B/Cすべてに完全な項目を入れる
-- 「気になる職種があればお知らせください」のような曖昧な締め方はしない
-
-${buildConditionStatusInstruction(profile)}
-`;
 }
 
 async function handleCompanyTemplateSelect(userId, replyToken, session, templateName) {
@@ -3877,298 +3170,69 @@ ${JSON.stringify(profile, null, 2)}
 
 async function generateAutoRefinedJobSuggestion(userId) {
   const autoPrompt =
-    "保存済みの条件がそろったので、現在のプロフィールを前提に改めて求人提案してください。A/B/Cの3パターンで、より条件に沿って具体的に提案してください。未取得項目がなければ【次に確認したいこと】は出さないでください。";
+    "保存済みの条件がそろったので、現在のプロフィールを前提に改めて求人提案してください。A/B/Cの3パターンで、より条件に沿って具体的に提案してください。未取得項目がなければ【次に確認したいこと】は出さないでください。各案に一致度と応募優先度を必ずつけてください。";
 
-  return askOpenAI(userId, autoPrompt, "job_suggestion");
+  return await askOpenAI(userId, autoPrompt, "job_suggestion");
 }
 
-async function handleJobSuggestionPreferenceCollection(
-  userId,
-  replyToken,
-  session,
-  userMessage
-) {
-  const profile = normalizeProfile(session?.profile || {});
-  const interviewState = normalizeInterviewState(session?.interview_state || {});
-  const pending = Array.isArray(interviewState.pending_preference_questions)
-    ? interviewState.pending_preference_questions
-    : [];
+// ===== Topic Starter Replies =====
+function getStarterReplyByIntent(intent) {
+  switch (intent) {
+    case "self_analysis":
+      return "自己分析ですね。これまでの経験・得意なこと・やりたくないことを、わかる範囲で教えてください。";
 
-  if (!pending.length || !interviewState.last_asked_preference) {
-    return false;
-  }
+    case "job_suggestion":
+      return `求人提案ですね。わかる範囲で大丈夫なので、以下を教えてください。
 
-  if (!isLikelySimplePreferenceAnswer(userMessage)) {
-    return false;
-  }
+・今までの経験（例：法人営業3年、製造業、RAなど）
+・やりたい仕事（例：営業企画、SaaS、企画寄り）
+・避けたいこと（例：転勤、ノルマ強すぎ、詰め文化）
+・希望年収
+・勤務地 / 働き方
 
-  const key = interviewState.last_asked_preference;
-  let patch = {};
+例：
+営業経験を活かしつつ、企画寄りの仕事をしたいです。
+年収は600万円以上、東京希望です。
+詰め管理が強い環境は避けたいです。
 
-  if (key === "preferred_industries" || key === "avoid_points_in_current_job") {
-    patch[key] = String(userMessage)
-      .split(/[、,\n]/)
-      .map((v) => v.trim())
-      .filter(Boolean);
-  } else {
-    patch[key] = String(userMessage).trim();
-  }
+ざっくりでも大丈夫です。近いものを選ぶだけでも進められます。
 
-  const mergedProfile = mergeProfile(profile, patch);
-  const nextMissing = getMissingPreferenceFields(mergedProfile);
-  const remainingKeys = nextMissing.map((item) => item.key);
+1. 営業経験を活かして安定寄りに進みたい
+2. 企画・事業寄りにキャリアアップしたい
+3. SaaSや成長企業で挑戦したい`;
 
-  await upsertSession(userId, {
-    profile: mergedProfile,
-    interview_state: {
-      ...interviewState,
-      pending_preference_questions: remainingKeys,
-      last_asked_preference: remainingKeys[0] || null,
-      lastOutputType: "job_preference_answer",
-    },
-  });
+    case "resume":
+      return "職務経歴書・経験整理ですね。これまでの職歴、担当業務、実績をわかる範囲で送ってください。";
 
-  if (remainingKeys.length > 0) {
-    const nextQuestion = getNextMissingPreferenceQuestion(mergedProfile);
+    case "resume_complete":
+      return "職務経歴書完成版ですね。これまでの会話内容をもとに、そのまま提出しやすい形でまとめます。";
 
-    const reply = `ありがとうございます。反映しました。
+    case "interview":
+      return "面接対策ですね。受ける職種や企業、想定される質問があれば送ってください。";
 
-続けて、もう1点だけ教えてください。
-${nextQuestion.question}`;
+    case "mock_interview":
+      return "模擬面接モードですね。例：模擬面接 営業企画 厳しめ / 模擬面接 RA 厳しめ / 模擬面接 リクルート RA 厳しめ / 模擬面接 SaaS 営業企画 厳しめ のように送ると、テンプレ別で進められます。";
 
-    await saveMessage(userId, "assistant", reply);
-    await replyToLine(replyToken, reply);
-    return true;
-  }
+    case "career":
+      return "キャリア相談ですね。今の悩み、転職したい理由、迷っていることをそのまま送ってください。";
 
-  const refined = await generateAutoRefinedJobSuggestion(userId);
-
-  await upsertSession(userId, {
-    current_topic: "job_suggestion",
-    interview_state: {
-      ...interviewState,
-      pending_preference_questions: [],
-      last_asked_preference: null,
-      lastOutputType: "job_suggestion_refined",
-    },
-  });
-
-  await saveMessage(userId, "assistant", refined);
-  await replyToLine(replyToken, refined);
-  return true;
-}
-
-// ===== Mock Interview Review / Polish =====
-async function handleAnswerPolish(userId, replyToken, userMessage) {
-  try {
-    const history = await getRecentMessages(userId, 12);
-    const session = await getSession(userId);
-    const profile = normalizeProfile(session?.profile || {});
-    const summary = session?.summary || "";
-
-    const recentUserMessages = history
-      .filter((m) => m.role === "user")
-      .map((m) => m.content)
-      .filter(Boolean);
-
-    let targetAnswer = "";
-    for (let i = recentUserMessages.length - 1; i >= 0; i--) {
-      const msg = recentUserMessages[i];
-      if (!detectAnswerPolishCommand(msg)) {
-        targetAnswer = msg;
-        break;
-      }
-    }
-
-    if (!targetAnswer) {
-      const reply =
-        "添削対象の回答が見つかりませんでした。先に回答文を送ったあとで「この回答を添削して」と送ってください。";
-      await saveMessage(userId, "assistant", reply);
-      await replyToLine(replyToken, reply);
-      return;
-    }
-
-    let toneInstruction = "実務的かつバランス良く添削してください。";
-    if (userMessage.includes("厳しめ")) {
-      toneInstruction =
-        "面接官視点で厳しめに添削し、弱い表現や抽象表現を明確に修正してください。";
-    } else if (
-      userMessage.includes("通過率が上がる") ||
-      userMessage.includes("面接向け") ||
-      userMessage.includes("面接用")
-    ) {
-      toneInstruction =
-        "面接通過率が上がるように、説得力・再現性・具体性を強めて添削してください。";
-    }
-
-    const prompt = `
-あなたは非常に優秀な面接コーチです。
-${toneInstruction}
-
-候補者プロフィール:
-${JSON.stringify(profile, null, 2)}
-
-候補者サマリー:
-${summary || "なし"}
-
-添削対象の回答:
-${targetAnswer}
-
-以下の形式で日本語で返してください。
-
-【元の回答の弱い点】
-- 2〜3点
-
-【改善のポイント】
-- 2〜3点
-
-【添削後の回答】
-- 面接でそのまま話せる自然な文章
-
-ルール:
-- 候補者が明示していない数値・成果・役職・KPIは創作しない
-- 抽象表現はなるべく具体化する
-- ただし事実にないことは足さない
-- 口頭で話しやすい長さにする
-`;
-
-    const completion = await openai.chat.completions.create({
-      model: OPENAI_MODEL,
-      messages: [
-        {
-          role: "system",
-          content:
-            "あなたは一流の面接コーチです。厳しくても建設的に回答添削を行ってください。",
-        },
-        {
-          role: "user",
-          content: prompt,
-        },
-      ],
-    });
-
-    const result =
-      completion.choices?.[0]?.message?.content?.trim() ||
-      "添削結果を生成できませんでした。";
-
-    const reply = `【回答添削】
-${result}`;
-
-    await saveMessage(userId, "assistant", reply);
-    await replyToLine(replyToken, reply);
-  } catch (error) {
-    console.error("handleAnswerPolish error:", error);
-
-    const reply = "回答添削中にエラーが発生しました。";
-    await saveMessage(userId, "assistant", reply);
-    await replyToLine(replyToken, reply);
+    default:
+      return getMainMenuText();
   }
 }
 
-// ===== Generic Topic Reply =====
-async function handleTopicReply(userId, replyToken, userMessage, session) {
-  const currentTopic = resolveCurrentTopic(
-    userMessage,
-    session?.current_topic || null
-  );
-
-  const menuIntent = detectMenuIntent(userMessage);
-
-  if (menuIntent === "show_menu") {
-    const reply = getMainMenuText();
-    await saveMessage(userId, "assistant", reply);
-    await replyToLine(replyToken, reply);
-    return true;
-  }
-
-  if (
-    menuIntent &&
-    [
-      "self_analysis",
-      "job_suggestion",
-      "resume",
-      "resume_complete",
-      "interview",
-      "career",
-    ].includes(menuIntent) &&
-    shouldUseStarterReply(userMessage, menuIntent)
-  ) {
-    await upsertSession(userId, {
-      current_topic: menuIntent,
-    });
-
-    const starterMap = {
-      self_analysis:
-        "自己分析ですね。これまでの経験、得意なこと、苦手なこと、仕事でやりがいを感じたことなど、わかる範囲で教えてください。",
-      job_suggestion:
-        "求人提案ですね。希望職種、年収、勤務地、業界、働き方など、わかる範囲で教えてください。",
-      resume:
-        "職務経歴書・経験整理ですね。これまでの会社名、仕事内容、成果、強みとして出したいことをわかる範囲で教えてください。",
-      resume_complete:
-        "職務経歴書完成版ですね。これまでの内容をもとに完成形に整えます。足りない情報があれば補足してください。",
-      interview:
-        "面接対策ですね。志望職種、気になる質問、答えに自信がないポイントがあれば教えてください。",
-      career:
-        "キャリア相談ですね。今の悩み、転職理由、将来やりたいことなどをわかる範囲で教えてください。",
-    };
-
-    const reply = starterMap[menuIntent] || getMainMenuText();
-    await saveMessage(userId, "assistant", reply);
-    await replyToLine(replyToken, reply);
-    return true;
-  }
-
-  if (!currentTopic) {
-    return false;
-  }
-
-  const aiReply = await askOpenAI(userId, userMessage, currentTopic);
-
-  let finalReply = aiReply;
-
-  if (
-    currentTopic === "job_suggestion" &&
-    shouldAskMissingPreferences(aiReply, currentTopic)
-  ) {
-    const updated = await getSession(userId);
-    const profile = normalizeProfile(updated?.profile || {});
-    const next = getNextMissingPreferenceQuestion(profile);
-
-    if (next) {
-      await upsertSession(userId, {
-        current_topic: "job_suggestion",
-        interview_state: {
-          ...(updated?.interview_state || {}),
-          pending_preference_questions: next.remainingKeys,
-          last_asked_preference: next.key,
-          lastOutputType: "job_preference_question",
-        },
-      });
-
-      finalReply += buildSingleMissingQuestionMessage(profile);
-    }
-  } else {
-    await upsertSession(userId, {
-      current_topic: currentTopic,
-    });
-  }
-
-  if (shouldAppendMenu(userMessage, finalReply)) {
-    const finishedTopic = detectFinishedTopic(userMessage) || currentTopic;
-    finalReply = `${finalReply}\n\n---\n${getNextActionMenuByTopic(finishedTopic)}`;
-  }
-
-  await saveMessage(userId, "assistant", finalReply);
-  await replyToLine(replyToken, finalReply);
-  return true;
+function getSelectedPlanFromState(state = {}) {
+  const normalized = normalizeInterviewState(state);
+  return normalized.selectedPlan || normalized.lastSelectedPlan || null;
 }
 
-// ===== Webhook Main =====
+// ===== Webhook =====
 app.post("/webhook", async (req, res) => {
   try {
     const signature = req.headers["x-line-signature"];
 
     if (!validateLineSignature(req.rawBody, signature)) {
+      console.error("Invalid LINE signature");
       return res.status(401).send("Invalid signature");
     }
 
@@ -4176,165 +3240,482 @@ app.post("/webhook", async (req, res) => {
 
     for (const event of events) {
       try {
-        if (event.type !== "message" || event.message.type !== "text") {
-          continue;
-        }
+        if (event.type !== "message" || event.message.type !== "text") continue;
 
         const userId = event.source.userId;
         const replyToken = event.replyToken;
-        const userMessage = String(event.message.text || "").trim();
+        const userMessage = (event.message.text || "").trim();
 
-        if (!userId || !replyToken || !userMessage) {
+        if (event.source?.type === "user" && userId) {
+          await showLineLoading(userId, 10);
+        }
+
+        console.log("User message:", userMessage);
+
+        const sessionBefore = await getSession(userId);
+        const beforeInterviewState = normalizeInterviewState(
+          sessionBefore?.interview_state || {}
+        );
+
+        // ===== 一時停止 / 再開 =====
+        if (isPauseCommand(userMessage)) {
+          await saveMessage(userId, "user", userMessage);
+          await handlePauseMockInterview(userId, replyToken, sessionBefore);
           continue;
         }
 
-        await saveMessage(userId, "user", userMessage);
+        if (isResumeCommand(userMessage)) {
+          await saveMessage(userId, "user", userMessage);
+          const latestSession = await getSession(userId);
+          await handleResumeMockInterview(userId, replyToken, latestSession);
+          continue;
+        }
 
-        let session = await updateUserProfile(userId, userMessage);
-        session = session || (await getSession(userId));
-
-        if (!session) {
+        if (sessionBefore?.is_paused) {
+          await saveMessage(userId, "user", userMessage);
           const reply =
-            "セッションの初期化に失敗しました。もう一度送ってください。";
+            "今は模擬面接を一時停止中です。再開する場合は「再開」、終了する場合は「終了」と送ってください。";
+          await saveMessage(userId, "assistant", reply);
           await replyToLine(replyToken, reply);
           continue;
         }
 
-        const profile = normalizeProfile(session.profile || {});
-        const interviewState = normalizeInterviewState(
-          session.interview_state || {}
-        );
+        // ===== 企業テンプレ追加 / 一覧 / 読み込み / 削除 =====
+        if (isCompanyTemplateAddCommand(userMessage)) {
+          await saveMessage(userId, "user", userMessage);
+          await handleCompanyTemplateAddStart(userId, replyToken, sessionBefore);
+          continue;
+        }
 
-        if (profile.waiting_company_template_input) {
+        if (isCompanyTemplateListCommand(userMessage)) {
+          await saveMessage(userId, "user", userMessage);
+          await handleCompanyTemplateList(userId, replyToken, sessionBefore);
+          continue;
+        }
+
+        if (isCompanyTemplateDeleteCommand(userMessage)) {
+          await saveMessage(userId, "user", userMessage);
+          await handleCompanyTemplateDeleteStart(userId, replyToken, sessionBefore);
+          continue;
+        }
+
+        if (
+          sessionBefore?.profile?.waiting_company_template_input &&
+          userMessage.includes("企業名:")
+        ) {
+          await saveMessage(userId, "user", userMessage);
+          const latestSession = await getSession(userId);
           await handleCompanyTemplateInput(
             userId,
             replyToken,
-            session,
+            latestSession,
             userMessage
           );
           continue;
         }
 
         if (
-          profile.waiting_company_template_delete &&
+          sessionBefore?.profile?.waiting_company_template_delete &&
           userMessage.startsWith("削除:")
         ) {
+          await saveMessage(userId, "user", userMessage);
+          const latestSession = await getSession(userId);
           await handleCompanyTemplateDeleteExecute(
             userId,
             replyToken,
-            session,
+            latestSession,
             userMessage
           );
           continue;
         }
 
-        if (isCompanyTemplateAddCommand(userMessage)) {
-          await handleCompanyTemplateAddStart(userId, replyToken, session);
-          continue;
-        }
-
-        if (isCompanyTemplateListCommand(userMessage)) {
-          await handleCompanyTemplateList(userId, replyToken, session);
-          continue;
-        }
-
-        if (isCompanyTemplateDeleteCommand(userMessage)) {
-          await handleCompanyTemplateDeleteStart(userId, replyToken, session);
-          continue;
-        }
-
-        const templateUseTarget = extractTemplateUseTarget(userMessage);
-        if (templateUseTarget) {
+        const templateTarget = extractTemplateUseTarget(userMessage);
+        if (templateTarget) {
+          await saveMessage(userId, "user", userMessage);
+          const latestSession = await getSession(userId);
           await handleCompanyTemplateSelect(
             userId,
             replyToken,
-            session,
-            templateUseTarget
+            latestSession,
+            templateTarget
           );
           continue;
         }
 
+        // ===== 模擬面接開始 =====
+      if (detectMockInterviewCommand(userMessage)) {
+  const requestedLabel = detectRequestedSuggestionLabel(userMessage);
+  const latestSession = await getSession(userId);
+  const latestState = normalizeInterviewState(latestSession?.interview_state || {});
+
+  if (requestedLabel) {
+    await upsertSession(userId, {
+      interview_state: {
+        ...latestState,
+        selectedPlan: requestedLabel,
+        lastSelectedPlan: requestedLabel,
+      },
+    });
+  }
+
+  const refreshedSession = await getSession(userId);
+  await startMockInterview(userId, replyToken, refreshedSession, userMessage);
+  continue;
+}
+
+        // ===== 模擬面接中の回答処理 =====
+        if (
+          beforeInterviewState.mode === "mock_interview" &&
+          !beforeInterviewState.isFinished &&
+          !detectMockInterviewCommand(userMessage)
+        ) {
+          await saveMessage(userId, "user", userMessage);
+          const latestSession = await getSession(userId);
+          await handleMockInterviewAnswer(userId, replyToken, latestSession, userMessage);
+          continue;
+        }
+
+        const resolvedTopic = resolveCurrentTopic(
+          userMessage,
+          sessionBefore?.current_topic || null
+        );
+
+        if (resolvedTopic !== (sessionBefore?.current_topic || null)) {
+          await upsertSession(userId, { current_topic: resolvedTopic });
+        }
+
+        await saveMessage(userId, "user", userMessage);
+        const updatedSession = await updateUserProfile(userId, userMessage);
+        const updatedProfile = normalizeProfile(updatedSession?.profile || {});
+        const currentState = normalizeInterviewState(
+          (await getSession(userId))?.interview_state || beforeInterviewState
+        );
+
+        const menuIntent = detectMenuIntent(userMessage);
+        const selectedPlan = getSelectedPlanFromState(currentState);
+
+        if (menuIntent === "show_menu") {
+          const reply = getMainMenuText();
+          await saveMessage(userId, "assistant", reply);
+          await replyToLine(replyToken, reply);
+          continue;
+        }
+
+        // ===== 前回の模擬面接 振り返り =====
         if (detectMockInterviewReviewCommand(userMessage)) {
           await handleMockInterviewReview(userId, replyToken, userMessage);
           continue;
         }
 
+        // ===== 回答添削 =====
         if (detectAnswerPolishCommand(userMessage)) {
           await handleAnswerPolish(userId, replyToken, userMessage);
           continue;
         }
 
-        if (isPauseCommand(userMessage)) {
-          await handlePauseMockInterview(userId, replyToken, session);
+        // ===== A/B/C を選んだら、その案を保存 =====
+        const selectedLabel = detectRequestedSuggestionLabel(userMessage);
+        if (selectedLabel) {
+          await upsertSession(userId, {
+            interview_state: {
+              ...currentState,
+              selectedPlan: selectedLabel,
+              lastSelectedPlan: selectedLabel,
+              lastOutputType: "job_suggestion_select",
+            },
+          });
+        }
+
+        // ===== A/B/C 選択後は、経験整理も即その案前提で返す =====
+        if (menuIntent === "resume" && selectedPlan) {
+          await upsertSession(userId, {
+            current_topic: "resume",
+            interview_state: {
+              ...currentState,
+              selectedPlan,
+              lastSelectedPlan: selectedPlan,
+              lastOutputType: "resume",
+            },
+          });
+
+          const reply = await askOpenAI(userId, userMessage, "resume");
+
+          await saveMessage(userId, "assistant", reply);
+          await replyToLine(replyToken, reply);
           continue;
         }
 
-        if (isResumeCommand(userMessage)) {
-          await handleResumeMockInterview(userId, replyToken, session);
+        // ===== A/B/C 選択後は、完成版も即その案前提で返す =====
+        if (menuIntent === "resume_complete" && selectedPlan) {
+          await upsertSession(userId, {
+            current_topic: "resume_complete",
+            interview_state: {
+              ...currentState,
+              selectedPlan,
+              lastSelectedPlan: selectedPlan,
+              lastOutputType: "resume_complete",
+            },
+          });
+
+          const reply = await askOpenAI(userId, userMessage, "resume_complete");
+
+          await saveMessage(userId, "assistant", reply);
+          await replyToLine(replyToken, reply);
           continue;
         }
+
+        // ===== A/B/C 選択後は、面接対策を即その案前提で返す =====
+        if (menuIntent === "interview" && selectedPlan) {
+          await upsertSession(userId, {
+            current_topic: "interview",
+            interview_state: {
+              ...currentState,
+              selectedPlan,
+              lastSelectedPlan: selectedPlan,
+              lastOutputType: "interview",
+            },
+          });
+
+          const reply = await askOpenAI(userId, userMessage, "interview");
+
+          await saveMessage(userId, "assistant", reply);
+          await replyToLine(replyToken, reply);
+          continue;
+        }
+
+        // ===== 面接対策に入った後で「A案/B案/C案」だけ送っても切り替えられるようにする =====
+        if (menuIntent === "interview" || resolvedTopic === "interview") {
+          const planOnly = detectRequestedSuggestionLabel(userMessage);
+          if (planOnly) {
+            await upsertSession(userId, {
+              current_topic: "interview",
+              interview_state: {
+                ...currentState,
+                selectedPlan: planOnly,
+                lastSelectedPlan: planOnly,
+                lastOutputType: "interview",
+              },
+            });
+
+            const reply = await askOpenAI(userId, userMessage, "interview");
+            await saveMessage(userId, "assistant", reply);
+            await replyToLine(replyToken, reply);
+            continue;
+          }
+        }
+
+        // ===== starter reply は selectedPlan がない時だけ =====
+        if (
+          (menuIntent === "self_analysis" ||
+            menuIntent === "job_suggestion" ||
+            menuIntent === "resume" ||
+            menuIntent === "resume_complete" ||
+            menuIntent === "interview" ||
+            menuIntent === "career") &&
+          shouldUseStarterReply(userMessage, menuIntent)
+        ) {
+          const topicToSave = menuIntent;
+
+          await upsertSession(userId, {
+            current_topic: topicToSave,
+            interview_state: {
+              ...currentState,
+            },
+          });
+
+          const reply = getStarterReplyByIntent(menuIntent);
+
+          await saveMessage(userId, "assistant", reply);
+          await replyToLine(replyToken, reply);
+          continue;
+        }
+
+        const waitingPreferenceKey = currentState.last_asked_preference;
+        const activeTopic = resolvedTopic || updatedSession?.current_topic || null;
+
+        // ===== 不足条件ヒアリング =====
+        if (
+          activeTopic === "job_suggestion" &&
+          waitingPreferenceKey &&
+          isFieldFilled(updatedProfile[waitingPreferenceKey]) &&
+          isLikelySimplePreferenceAnswer(userMessage)
+        ) {
+          const nextQuestion = getNextMissingPreferenceQuestion(updatedProfile);
+
+          if (nextQuestion) {
+            const reply = `ありがとうございます。
+では次に、こちらを教えてください。
+
+${nextQuestion.question}`;
+
+            await upsertSession(userId, {
+              current_topic: "job_suggestion",
+              interview_state: {
+                ...currentState,
+                pending_preference_questions: nextQuestion.remainingKeys,
+                last_asked_preference: nextQuestion.key,
+                lastOutputType: "job_suggestion_preference_question",
+              },
+            });
+
+            await saveMessage(userId, "assistant", reply);
+            await replyToLine(replyToken, reply);
+            continue;
+          } else {
+            const reply = await generateAutoRefinedJobSuggestion(userId);
+
+            await upsertSession(userId, {
+              current_topic: "job_suggestion",
+              interview_state: {
+                ...currentState,
+                pending_preference_questions: [],
+                last_asked_preference: null,
+                lastOutputType: "job_suggestion_main",
+              },
+            });
+
+            await saveMessage(userId, "assistant", reply);
+            await replyToLine(replyToken, reply);
+            continue;
+          }
+        }
+
+        // ===== 求人提案の深掘り =====
+        if (activeTopic === "job_suggestion") {
+          const explicitLabel = detectRequestedSuggestionLabel(userMessage);
+
+          if (explicitLabel || isNextRequest(userMessage) || isFollowupRequest(userMessage)) {
+            const interviewState = normalizeInterviewState(currentState);
+            const currentStep =
+              typeof interviewState.jobSuggestionStep === "number"
+                ? interviewState.jobSuggestionStep
+                : explicitLabel
+                ? ["A", "B", "C"].indexOf(explicitLabel)
+                : -1;
+
+            let targetStep = 0;
+
+            if (explicitLabel) {
+              targetStep = ["A", "B", "C"].indexOf(explicitLabel);
+            } else if (isNextRequest(userMessage)) {
+              if (currentStep >= 2) {
+                const reply = `3つの案を一通り見たので、次は以下に進められます。
+
+・職務経歴書
+・職務経歴書完成版
+・面接対策
+・模擬面接
+
+「職務経歴書」「職務経歴書完成版」「面接対策」または「模擬面接」と送ってください。`;
+
+                await saveMessage(userId, "assistant", reply);
+                await replyToLine(replyToken, reply);
+                continue;
+              }
+
+              targetStep = currentStep + 1;
+            } else {
+              targetStep = currentStep >= 0 ? currentStep : 0;
+            }
+
+            const label = ["A", "B", "C"][targetStep];
+
+            await upsertSession(userId, {
+              current_topic: "job_suggestion",
+              interview_state: {
+                ...interviewState,
+                jobSuggestionStep: targetStep,
+                selectedPlan: label,
+                lastSelectedPlan: label,
+                lastOutputType: "job_suggestion_followup",
+              },
+            });
+
+            const overrideInstruction = buildJobSuggestionFollowupInstruction(
+              updatedProfile,
+              label
+            );
+
+            const reply = await askOpenAI(
+              userId,
+              userMessage,
+              "job_suggestion",
+              overrideInstruction
+            );
+
+            await saveMessage(userId, "assistant", reply);
+            await replyToLine(replyToken, reply);
+            continue;
+          }
+        }
+
+        // ===== 通常応答 =====
+        const assistantReply = await askOpenAI(userId, userMessage, activeTopic);
+
+        let finalReply = assistantReply;
+        const finishedTopic = detectFinishedTopic(userMessage);
+        const isFollowup =
+          activeTopic === "job_suggestion" && isFollowupRequest(userMessage);
 
         if (
-          interviewState.mode === "mock_interview" &&
-          !interviewState.isFinished
+          !isFollowup &&
+          (activeTopic === "job_suggestion" ||
+            shouldAskMissingPreferences(assistantReply, activeTopic))
         ) {
-          await handleMockInterviewAnswer(
-            userId,
-            replyToken,
-            session,
-            userMessage
-          );
-          continue;
+          const singleQuestion = buildSingleMissingQuestionMessage(updatedProfile);
+          const nextQuestion = getNextMissingPreferenceQuestion(updatedProfile);
+
+          if (singleQuestion && nextQuestion) {
+            finalReply += singleQuestion;
+
+            await upsertSession(userId, {
+              current_topic: "job_suggestion",
+              interview_state: {
+                ...currentState,
+                pending_preference_questions: nextQuestion.remainingKeys,
+                last_asked_preference: nextQuestion.key,
+                lastOutputType: "job_suggestion_preference_question",
+              },
+            });
+          } else if (activeTopic === "job_suggestion") {
+            await upsertSession(userId, {
+              current_topic: "job_suggestion",
+              interview_state: {
+                ...currentState,
+                pending_preference_questions: [],
+                last_asked_preference: null,
+                lastOutputType: "job_suggestion_main",
+              },
+            });
+          }
         }
 
-        if (detectMockInterviewCommand(userMessage)) {
-          await startMockInterview(userId, replyToken, session, userMessage);
-          continue;
+        const shouldSkipTopicMenu =
+          activeTopic === "job_suggestion" ||
+          isJobSuggestionContext(userMessage) ||
+          shouldAskMissingPreferences(assistantReply, activeTopic);
+
+        if (!shouldSkipTopicMenu && finishedTopic) {
+          finalReply += `\n\n---\n${getNextActionMenuByTopic(finishedTopic)}`;
+        } else if (!shouldSkipTopicMenu && shouldAppendMenu(userMessage, assistantReply)) {
+          finalReply += `\n\n---\n${getMainMenuText()}`;
         }
 
-        const handledPreference = await handleJobSuggestionPreferenceCollection(
-          userId,
-          replyToken,
-          session,
-          userMessage
-        );
-
-        if (handledPreference) {
-          continue;
-        }
-
-        const handledTopic = await handleTopicReply(
-          userId,
-          replyToken,
-          userMessage,
-          session
-        );
-
-        if (handledTopic) {
-          continue;
-        }
-
-        const fallbackReply = await askOpenAI(userId, userMessage);
-        await saveMessage(userId, "assistant", fallbackReply);
-        await replyToLine(replyToken, fallbackReply);
+        await saveMessage(userId, "assistant", finalReply);
+        await replyToLine(replyToken, finalReply);
       } catch (eventError) {
         console.error("Event handling error:", eventError);
-        try {
-          await replyToLine(
-            event.replyToken,
-            "処理中にエラーが発生しました。もう一度送ってください。"
-          );
-        } catch (_) {}
       }
     }
 
-    res.status(200).send("OK");
+    return res.status(200).send("OK");
   } catch (error) {
     console.error("Webhook error:", error);
-    res.status(500).send("Internal Server Error");
+    return res.status(500).send("Internal Server Error");
   }
 });
 
+// ===== Start Server =====
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
 });
