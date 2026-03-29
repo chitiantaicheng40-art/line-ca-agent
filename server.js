@@ -4074,7 +4074,7 @@ await upsertSession(userId, {
 
 対象:
 - selectedPlan: ${selectedPlan}
-- rdetectedSelectedJob: ${detectedSelectedJob}
+- selectedJob: ${detectedSelectedJob}
 
 以下の求人向けに、職務経歴書を作成してください。
 
@@ -4213,13 +4213,8 @@ await upsertSession(userId, {
           finalReply += `\n\n---\n${getMainMenuText()}`;
         }
 
-        await saveMessage(userId, "assistant", finalReply);
+                await saveMessage(userId, "assistant", finalReply);
         await replyToLine(replyToken, finalReply);
-      } catch (eventError) {
-        console.error("Event handling error:", eventError);
-      }
-    }
-
       } catch (eventError) {
         console.error("Event handling error:", eventError);
       }
