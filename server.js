@@ -3744,11 +3744,15 @@ ${nextQuestion.question}`;
           }
         }
 
-        // ===== 求人提案の深掘り =====
+               // ===== 求人提案の深掘り =====
         if (activeTopic === "job_suggestion") {
           const explicitLabel = detectRequestedSuggestionLabel(userMessage);
 
-          if (explicitLabel || isNextRequest(userMessage) || isFollowupRequest(userMessage)) {
+          if (
+            explicitLabel ||
+            isNextRequest(userMessage) ||
+            isFollowupRequest(userMessage)
+          ) {
             const interviewState = normalizeInterviewState(currentState);
             const currentStep =
               typeof interviewState.jobSuggestionStep === "number"
@@ -3813,23 +3817,21 @@ ${nextQuestion.question}`;
           }
         }
 
-        }
-
         // ===== 求人別 職務経歴書 =====
         if (isSpecificJobResumeRequest(userMessage)) {
-          const currentState = normalizeInterviewState(
+          const currentStateForResume = normalizeInterviewState(
             updatedSession?.interview_state || session?.interview_state || {}
           );
 
           const selectedPlan =
-            currentState.selectedPlan ||
-            currentState.lastSelectedPlan ||
+            currentStateForResume.selectedPlan ||
+            currentStateForResume.lastSelectedPlan ||
             "A";
 
           await upsertSession(userId, {
             current_topic: "resume",
             interview_state: {
-              ...currentState,
+              ...currentStateForResume,
               selectedPlan,
               lastSelectedPlan: selectedPlan,
               lastOutputType: "resume_specific_job",
@@ -3874,19 +3876,19 @@ ${nextQuestion.question}`;
 
         // ===== 具体求人3件 =====
         if (isConcreteThreeJobsRequest(userMessage)) {
-          const currentState = normalizeInterviewState(
+          const currentStateForJobs = normalizeInterviewState(
             updatedSession?.interview_state || session?.interview_state || {}
           );
 
           const selectedPlan =
-            currentState.selectedPlan ||
-            currentState.lastSelectedPlan ||
+            currentStateForJobs.selectedPlan ||
+            currentStateForJobs.lastSelectedPlan ||
             "A";
 
           await upsertSession(userId, {
             current_topic: "job_suggestion",
             interview_state: {
-              ...currentState,
+              ...currentStateForJobs,
               selectedPlan,
               lastSelectedPlan: selectedPlan,
               lastOutputType: "job_suggestion_concrete_3",
