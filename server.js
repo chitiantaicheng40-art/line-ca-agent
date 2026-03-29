@@ -2430,6 +2430,17 @@ function isConcreteThreeJobsRequest(text = "") {
   );
 }
 
+function isSpecificJobResumeRequest(text = "") {
+  const s = String(text || "").trim();
+
+  return (
+    s.includes("求人1向けの職務経歴書") ||
+    s.includes("求人2向けの職務経歴書") ||
+    s.includes("求人3向けの職務経歴書") ||
+    s.includes("向けの職務経歴書を作って")
+  );
+}
+
 function buildConcreteThreeJobsInstruction(profile = {}, selectedPlan = "A") {
   const planMap = {
     A: "営業企画 / RevOps / カスタマーサクセス企画",
