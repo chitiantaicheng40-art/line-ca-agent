@@ -1725,30 +1725,45 @@ async function handleMockInterviewAnswer(
   const summary = session?.summary || "";
 
   if (userMessage.trim() === "終了") {
-    const endedState = {
-      ...interviewState,
-      mode: null,
-      isFinished: true,
-      lastOutputType: "mock_interview_end",
-    };
+  const endedState = {
+    ...interviewState,
+    mode: null,
+    isFinished: true,
+    lastOutputType: "mock_interview_end",
+  };
 
-    await upsertSession(userId, {
-      current_topic: null,
-      current_mode: "normal",
-      is_paused: false,
-      paused_state: {},
-      interview_state: endedState,
-    });
+  const finalReview = await generateMockInterviewFinalReview(
+    {
+      ...endedState,
+      answers: Array.isArray(interviewState.answers) ? interviewState.answers : [],
+    },
+    profile,
+    summary
+  );
 
-    const reply = `模擬面接モードを終了しました。お疲れさまでした。
+  endedState.finalReview = finalReview;
+
+  await upsertSession(userId, {
+    current_topic: null,
+    current_mode: "normal",
+    is_paused: false,
+    paused_state: {},
+    interview_state: endedState,
+  });
+
+  const reply = `模擬面接モードを終了しました。お疲れさまでした。
+
+====================
+【途中終了時点の総評】
+${finalReview}
 
 ---
 ${getNextActionMenuByTopic("mock_interview")}`;
 
-    await saveMessage(userId, "assistant", reply);
-    await replyToLine(replyToken, reply);
-    return;
-  }
+  await saveMessage(userId, "assistant", reply);
+  await replyToLine(replyToken, reply);
+  return;
+}
 
   const questions = getQuestionsFromInterviewState(interviewState, session);
   const currentIndex = interviewState.questionIndex || 0;
