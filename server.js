@@ -997,6 +997,7 @@ async function getSession(userId) {
     current_mode: data.current_mode || "normal",
     is_paused: Boolean(data.is_paused),
     paused_state: data.paused_state || {},
+    selected_job: data.selected_job || null,
     company_templates:
       data.company_templates && typeof data.company_templates === "object"
         ? data.company_templates
@@ -1039,41 +1040,45 @@ async function upsertSession(userId, patch = {}) {
   const current = await getSession(userId);
 
   const payload = {
-    user_id: userId,
-    profile: mergeProfile(current?.profile || {}, patch.profile || {}),
-    summary:
-      patch.summary !== undefined ? patch.summary : current?.summary || null,
-    current_topic:
-      patch.current_topic !== undefined
-        ? patch.current_topic
-        : current?.current_topic || null,
-    interview_state:
-      patch.interview_state !== undefined
-        ? patch.interview_state
-        : current?.interview_state || {},
-    current_mode:
-      patch.current_mode !== undefined
-        ? patch.current_mode
-        : current?.current_mode || "normal",
-    is_paused:
-      patch.is_paused !== undefined
-        ? patch.is_paused
-        : current?.is_paused || false,
-    paused_state:
-      patch.paused_state !== undefined
-        ? patch.paused_state
-        : current?.paused_state || {},
-    company_templates:
-      patch.company_templates !== undefined
-        ? patch.company_templates
-        : current?.company_templates || {},
-    plan_type: patch.plan_type ?? current?.plan_type ?? "free",
-    usage_count:
-      typeof patch.usage_count === "number"
-        ? patch.usage_count
-        : current?.usage_count ?? 0,
-    updated_at: new Date().toISOString(),
-  };
+  user_id: userId,
+  profile: mergeProfile(current?.profile || {}, patch.profile || {}),
+  summary:
+    patch.summary !== undefined ? patch.summary : current?.summary || null,
+  current_topic:
+    patch.current_topic !== undefined
+      ? patch.current_topic
+      : current?.current_topic || null,
+  selected_job:
+    patch.selected_job !== undefined
+      ? patch.selected_job
+      : current?.selected_job || null,
+  interview_state:
+    patch.interview_state !== undefined
+      ? patch.interview_state
+      : current?.interview_state || {},
+  current_mode:
+    patch.current_mode !== undefined
+      ? patch.current_mode
+      : current?.current_mode || "normal",
+  is_paused:
+    patch.is_paused !== undefined
+      ? patch.is_paused
+      : current?.is_paused || false,
+  paused_state:
+    patch.paused_state !== undefined
+      ? patch.paused_state
+      : current?.paused_state || {},
+  company_templates:
+    patch.company_templates !== undefined
+      ? patch.company_templates
+      : current?.company_templates || {},
+  plan_type: patch.plan_type ?? current?.plan_type ?? "free",
+  usage_count:
+    typeof patch.usage_count === "number"
+      ? patch.usage_count
+      : current?.usage_count ?? 0,
+  updated_at: new Date().toISOString(),
+};
 
   const { data, error } = await supabase
     .from("line_ca_sessions")
@@ -1087,18 +1092,19 @@ async function upsertSession(userId, patch = {}) {
   }
 
   return {
-    ...data,
-    profile: normalizeProfile(data.profile || {}),
-    interview_state: normalizeInterviewState(data.interview_state || {}),
-    current_topic: data.current_topic || null,
-    current_mode: data.current_mode || "normal",
-    is_paused: Boolean(data.is_paused),
-    paused_state: data.paused_state || {},
-    company_templates:
-      data.company_templates && typeof data.company_templates === "object"
-        ? data.company_templates
-        : {},
-  };
+  ...data,
+  profile: normalizeProfile(data.profile || {}),
+  interview_state: normalizeInterviewState(data.interview_state || {}),
+  current_topic: data.current_topic || null,
+  selected_job: data.selected_job || null,
+  current_mode: data.current_mode || "normal",
+  is_paused: Boolean(data.is_paused),
+  paused_state: data.paused_state || {},
+  company_templates:
+    data.company_templates && typeof data.company_templates === "object"
+      ? data.company_templates
+      : {},
+　};
 }
 
 // ===== Conversation History =====
@@ -2441,6 +2447,36 @@ function isSpecificJobResumeRequest(text = "") {
   );
 }
 
+function detectSelectedJob(text = "") {
+  const s = String(text || "").trim();
+
+  if (
+    s.includes("求人1") ||
+    s.includes("1向け") ||
+    s === "1"
+  ) {
+    return "job1";
+  }
+
+  if (
+    s.includes("求人2") ||
+    s.includes("2向け") ||
+    s === "2"
+  ) {
+    return "job2";
+  }
+
+  if (
+    s.includes("求人3") ||
+    s.includes("3向け") ||
+    s === "3"
+  ) {
+    return "job3";
+  }
+
+  return null;
+}
+
 function buildConcreteThreeJobsInstruction(profile = {}, selectedPlan = "A") {
   const planMap = {
     A: "営業企画 / RevOps / カスタマーサクセス企画",
@@ -3569,6 +3605,18 @@ app.post("/webhook", async (req, res) => {
         const menuIntent = detectMenuIntent(userMessage);
         const selectedPlan = getSelectedPlanFromState(currentState);
 
+const selectedJob = detectSelectedJob(userMessage);
+
+if (selectedJob) {
+  await upsertSession(userId, {
+    selected_job: selectedJob,
+    interview_state: {
+      ...currentState,
+      lastOutputType: "job_select",
+    },
+  });
+}
+
         if (menuIntent === "show_menu") {
           const reply = getMainMenuText();
           await saveMessage(userId, "assistant", reply);
@@ -3847,17 +3895,19 @@ if (isSpecificJobResumeRequest(userMessage)) {
     selectedJob = "求人3";
   }
 
-  await upsertSession(userId, {
-    current_topic: "resume",
-    selected_job: selectedJob,
-    interview_state: {
-      ...currentStateForResume,
-      selectedPlan,
-      lastSelectedPlan: selectedPlan,
-      selectedJob,
-      lastOutputType: "resume_specific_job",
-    },
-  });
+  const selectedJob = detectSelectedJob(userMessage);
+
+await upsertSession(userId, {
+  current_topic: "resume",
+  selected_job: selectedJob || updatedSession?.selected_job || null,
+  interview_state: {
+    ...currentStateForResume,
+    selectedPlan,
+    lastSelectedPlan: selectedPlan,
+    selectedJob: selectedJob || updatedSession?.selected_job || null,
+    lastOutputType: "resume_specific_job",
+  },
+});
 
   const reply = await askOpenAI(
     userId,
