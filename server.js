@@ -3794,7 +3794,17 @@ if (selectedJob) {
         }
 
         // ===== A/B/C 選択後は、面接対策を即その案前提で返す =====
-        if (menuIntent === "interview" && selectedPlan) {
+        if (menuIntent === "interview") {
+  const currentState = normalizeInterviewState(
+    updatedSession?.interview_state || sessionBefore?.interview_state || {}
+  );
+
+  const selectedPlan =
+    currentState.selectedPlan ||
+    currentState.lastSelectedPlan ||
+    "A";
+
+  await upsertSession(userId, {
           await upsertSession(userId, {
             current_topic: "interview",
             interview_state: {
@@ -3818,6 +3828,7 @@ if (selectedJob) {
           if (planOnly) {
             await upsertSession(userId, {
               current_topic: "interview",
+　　　　　　　　 current_stage: "interview",
               interview_state: {
                 ...currentState,
                 selectedPlan: planOnly,
