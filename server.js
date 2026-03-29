@@ -3605,7 +3605,8 @@ app.post("/webhook", async (req, res) => {
         const menuIntent = detectMenuIntent(userMessage);
         const selectedPlan = getSelectedPlanFromState(currentState);
 
-const selectedJob = detectSelectedJob(userMessage);
+
+const resumeSelectedJob = detectSelectedJob(userMessage);
 
 if (selectedJob) {
   await upsertSession(userId, {
@@ -3895,7 +3896,7 @@ if (isSpecificJobResumeRequest(userMessage)) {
     selectedJob = "求人3";
   }
 
-  const selectedJob = detectSelectedJob(userMessage);
+  const resumeSelectedJob = detectSelectedJob(userMessage);
 
 await upsertSession(userId, {
   current_topic: "resume",
