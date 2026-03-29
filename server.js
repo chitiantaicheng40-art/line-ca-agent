@@ -580,6 +580,19 @@ function isFollowupRequest(text = "") {
   ].includes(s);
 }
 
+function isNextRequest(text = "") {
+  const s = String(text || "").trim();
+
+  return (
+    s === "次" ||
+    s === "次へ" ||
+    s === "続いて" ||
+    s === "続き" ||
+    s === "別案" ||
+    s === "ほか"
+  );
+}
+
 function detectRequestedSuggestionLabel(text = "") {
   const s = String(text || "").trim().toUpperCase();
 
