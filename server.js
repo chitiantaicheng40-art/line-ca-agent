@@ -1041,37 +1041,54 @@ function mergeProfile(existing = {}, patch = {}) {
 }
 
 async function upsertSession(userId, patch = {}) {
-  const current = await getSession(userId);
-
-  // 既存の upsertSession の中身
-}
-    
-async function saveCandidateHypothesis({
-  userId,
-  label,
-  title,
-  summary,
-  strengths = [],
-  concerns = [],
-}) {
   if (!supabase) return null;
 
+  const current = (await getSession(userId)) || {};
+
+  const mergedInterviewState = {
+    ...(current.interview_state || {}),
+    ...(patch.interview_state || {}),
+  };
+
+  const payload = {
+    user_id: userId,
+    profile: patch.profile
+      ? mergeProfile(current.profile || {}, patch.profile)
+      : current.profile || {},
+    summary:
+      patch.summary !== undefined ? patch.summary : current.summary || "",
+    interview_state: mergedInterviewState,
+    current_topic:
+      patch.current_topic !== undefined
+        ? patch.current_topic
+        : current.current_topic || null,
+    current_stage:
+      patch.current_stage !== undefined
+        ? patch.current_stage
+        : current.current_stage || null,
+    plan_type:
+      patch.plan_type !== undefined
+        ? patch.plan_type
+        : current.plan_type || "free",
+    usage_count:
+      patch.usage_count !== undefined
+        ? patch.usage_count
+        : current.usage_count || 0,
+    selected_job:
+      patch.selected_job !== undefined
+        ? patch.selected_job
+        : current.selected_job || null,
+    updated_at: new Date().toISOString(),
+  };
+
   const { data, error } = await supabase
-    .from("candidate_hypotheses")
-    .insert({
-      user_id: userId,
-      hypothesis_label: label,
-      title,
-      summary,
-      strengths,
-      concerns,
-      is_selected: false,
-    })
+    .from("line_ca_sessions")
+    .upsert(payload)
     .select()
     .single();
 
   if (error) {
-    console.error("saveCandidateHypothesis error:", error.message);
+    console.error("upsertSession error:", error.message);
     return null;
   }
 
@@ -1109,8 +1126,6 @@ async function saveCandidateJob({
   return data;
 }
 
-// ===== Conversation History =====
-async function getRecentMessages(userId, limit = 10) {
 // ===== Conversation History =====
 async function getRecentMessages(userId, limit = 10) {
   if (!supabase) return [];
