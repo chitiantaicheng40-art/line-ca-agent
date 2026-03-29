@@ -3246,7 +3246,7 @@ app.post("/webhook", async (req, res) => {
         }
 
         // ===== 模擬面接開始 =====
-      if (detectMockInterviewCommand(userMessage) || menuIntent === "mock_interview") {
+      if (detectMockInterviewCommand(userMessage)) {
   const requestedLabel = detectRequestedSuggestionLabel(userMessage);
   const latestSession = await getSession(userId);
   const latestState = normalizeInterviewState(latestSession?.interview_state || {});
