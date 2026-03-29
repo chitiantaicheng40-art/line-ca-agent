@@ -1054,20 +1054,29 @@ async function saveCandidateHypothesis({
   strengths = [],
   concerns = [],
 }) {
-  ...
-}
+  if (!supabase) return null;
 
-async function saveCandidateJob({
-  userId,
-  hypothesisId,
-  orderIndex,
-  title,
-  companyName,
-  summary,
-}) {
-  ...
-}
+  const { data, error } = await supabase
+    .from("candidate_hypotheses")
+    .insert({
+      user_id: userId,
+      hypothesis_label: label,
+      title,
+      summary,
+      strengths,
+      concerns,
+      is_selected: false,
+    })
+    .select()
+    .single();
 
+  if (error) {
+    console.error("saveCandidateHypothesis error:", error.message);
+    return null;
+  }
+
+  return data;
+}
 // ===== Conversation History =====
 async function getRecentMessages(userId, limit = 10) {
 // ===== Conversation History =====
