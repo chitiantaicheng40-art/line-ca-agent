@@ -3041,7 +3041,7 @@ function getStarterReplyByIntent(intent) {
     case "self_analysis":
       return "自己分析ですね。これまでの経験・得意なこと・やりたくないことを、わかる範囲で教えてください。";
     case "job_suggestion":
-      "return "求人提案ですね。わかる範囲で大丈夫なので、以下を教えてください。
+      return "求人提案ですね。わかる範囲で大丈夫なので、以下を教えてください。
 
 ・今までの経験（例：法人営業3年、製造業、RAなど）
 ・やりたい仕事（例：営業企画、SaaS、企画寄り）
