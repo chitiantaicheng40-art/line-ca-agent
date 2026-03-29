@@ -220,7 +220,7 @@ function getMainMenuText() {
 ・企業テンプレ追加
 ・企業テンプレ: リクルート
 
-やりたいものをそのまま送ってください。`;
+まずは「求人提案」「自己分析」「模擬面接 営業企画 厳しめ」など、やりたいことをそのまま送ってください。`;
 }
 
 function getNextActionMenuByTopic(topic = "") {
