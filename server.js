@@ -4100,7 +4100,7 @@ await upsertSession(userId, {
   current_topic: "job_suggestion",
   current_stage: "job_shortlist",
   interview_state: {
-    ...currentState,
+    ...currentStateForJobs,
     selectedPlan,
     lastSelectedPlan: selectedPlan,
     lastOutputType: "job_suggestion_concrete_3",
@@ -4179,17 +4179,16 @@ await upsertSession(userId, {
       }
     }
 
-    return res.status(200).send("OK");
-     } catch (error) {
-      console.error("Event handling error:", error);
+      } catch (eventError) {
+        console.error("Event handling error:", eventError);
+      }
     }
-  }
 
-  res.status(200).send("OK");
-} catch (error) {
-  console.error("Webhook error:", error);
-  res.status(500).send("Internal Server Error");
-}
+    return res.status(200).send("OK");
+  } catch (error) {
+    console.error("Webhook error:", error);
+    return res.status(500).send("Internal Server Error");
+  }
 });
 
 app.listen(PORT, () => {
