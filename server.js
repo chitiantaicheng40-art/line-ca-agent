@@ -1132,6 +1132,24 @@ function getMockInterviewTypeAndStrictness(userMessage = "", selectedPlan = null
   let type = "common";
   let companyTemplate = null;
 
+  if (!userMessage && selectedPlan) {
+    if (selectedPlan === "A") {
+      type = "sales";
+    } else if (selectedPlan === "B") {
+      type = "planning";
+    } else if (selectedPlan === "C") {
+      type = "cs";
+    }
+  }
+
+  if (selectedPlan === "A" && type === "common") {
+    type = "sales";
+  } else if (selectedPlan === "B" && type === "common") {
+    type = "planning";
+  } else if (selectedPlan === "C" && type === "common") {
+    type = "cs";
+  }
+
   if (
     lower.includes("リクルート") &&
     (lower.includes("ra") || lower.includes("リクルーティングアドバイザー"))
