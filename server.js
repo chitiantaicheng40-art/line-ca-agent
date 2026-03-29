@@ -1460,6 +1460,70 @@ async function handleMockInterviewReview(userId, replyToken, userMessage) {
       );
       return;
     }
+if (userMessage.includes("前回との比較")) {
+  const history = Array.isArray(state.reviewHistory)
+    ? state.reviewHistory
+    : [];
+
+  if (history.length < 2) {
+    await replyToLine(
+      replyToken,
+      "比較できるだけの面接履歴がありません。2回以上模擬面接を実施してください。"
+    );
+    return;
+  }
+
+  const previous = history[history.length - 2].review;
+  const latest = history[history.length - 1].review;
+
+  const prompt = `
+あなたは厳しめの面接官です。
+
+以下の2回分の模擬面接総評を比較し、
+「改善した点」「まだ弱い点」「次回最優先で直すこと」を簡潔にまとめてください。
+
+【前回】
+${previous}
+
+【今回】
+${latest}
+
+出力形式:
+【改善した点】
+- 3点以内
+
+【まだ弱い点】
+- 3点以内
+
+【次回最優先で直すこと】
+1.
+2.
+3.
+`;
+
+  const completion = await openai.chat.completions.create({
+    model: OPENAI_MODEL,
+    temperature: 0.2,
+    messages: [
+      {
+        role: "system",
+        content:
+          "あなたは一流企業の採用面接官です。実務的に比較してください。",
+      },
+      {
+        role: "user",
+        content: prompt,
+      },
+    ],
+  });
+
+  const compareText =
+    completion.choices?.[0]?.message?.content?.trim() ||
+    "比較を生成できませんでした。";
+
+  await replyToLine(replyToken, compareText);
+  return;
+}
 
     if (userMessage.includes("前回の模擬面接")) {
       const startIndex = Math.max(0, state.answers.length - 3);
@@ -1741,15 +1805,26 @@ async function handleMockInterviewAnswer(
     summary
   );
 
-  endedState.finalReview = finalReview;
+ endedState.finalReview = finalReview;
 
-  await upsertSession(userId, {
-    current_topic: null,
-    current_mode: "normal",
-    is_paused: false,
-    paused_state: {},
-    interview_state: endedState,
-  });
+const reviewHistory = Array.isArray(endedState.reviewHistory)
+  ? endedState.reviewHistory
+  : [];
+
+reviewHistory.push({
+  createdAt: new Date().toISOString(),
+  review: finalReview,
+});
+
+endedState.reviewHistory = reviewHistory.slice(-5);
+
+await upsertSession(userId, {
+  current_topic: null,
+  current_mode: "normal",
+  is_paused: false,
+  paused_state: {},
+  interview_state: endedState,
+});
 
   const reply = `模擬面接モードを終了しました。お疲れさまでした。
 
