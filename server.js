@@ -1126,7 +1126,7 @@ function getDefaultMockInterviewState(type = "common", strictness = "normal") {
   };
 }
 
-function getMockInterviewTypeAndStrictness(userMessage = "") {
+function getMockInterviewTypeAndStrictness(userMessage = "", selectedPlan = null) {
   const lower = String(userMessage || "").toLowerCase();
 
   let type = "common";
@@ -1183,9 +1183,11 @@ async function startMockInterview(
   userMessage = ""
 ) {
   const currentState = normalizeInterviewState(sessionBefore?.interview_state || {});
-  const { type, strictness, companyTemplate } =
-    getMockInterviewTypeAndStrictness(userMessage);
-
+　const { type, strictness, companyTemplate } =
+  getMockInterviewTypeAndStrictness(
+    userMessage,
+    currentState.selectedPlan || currentState.lastSelectedPlan || null
+  );
   const customTemplateName =
     !companyTemplate && currentState.companyTemplateName
       ? currentState.companyTemplateName
