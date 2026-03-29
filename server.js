@@ -994,6 +994,12 @@ async function getSession(userId) {
     profile: normalizeProfile(data.profile || {}),
     interview_state: normalizeInterviewState(data.interview_state || {}),
     current_topic: data.current_topic || null,
+    current_stage:
+      normalizeSessionStage(data.current_stage) ||
+      deriveStageFromTopic(data.current_topic || null),
+    current_hypothesis_id: normalizeUuidLike(data.current_hypothesis_id),
+    current_job_id: normalizeUuidLike(data.current_job_id),
+    active_search_id: normalizeUuidLike(data.active_search_id),
     current_mode: data.current_mode || "normal",
     is_paused: Boolean(data.is_paused),
     paused_state: data.paused_state || {},
@@ -1038,47 +1044,59 @@ async function upsertSession(userId, patch = {}) {
   if (!supabase) return null;
 
   const current = await getSession(userId);
+  const statePatch = buildSessionStatePatch(patch, current || {});
 
   const payload = {
-  user_id: userId,
-  profile: mergeProfile(current?.profile || {}, patch.profile || {}),
-  summary:
-    patch.summary !== undefined ? patch.summary : current?.summary || null,
-  current_topic:
-    patch.current_topic !== undefined
-      ? patch.current_topic
-      : current?.current_topic || null,
-  selected_job:
-    patch.selected_job !== undefined
-      ? patch.selected_job
-      : current?.selected_job || null,
-  interview_state:
-    patch.interview_state !== undefined
-      ? patch.interview_state
-      : current?.interview_state || {},
-  current_mode:
-    patch.current_mode !== undefined
-      ? patch.current_mode
-      : current?.current_mode || "normal",
-  is_paused:
-    patch.is_paused !== undefined
-      ? patch.is_paused
-      : current?.is_paused || false,
-  paused_state:
-    patch.paused_state !== undefined
-      ? patch.paused_state
-      : current?.paused_state || {},
-  company_templates:
-    patch.company_templates !== undefined
-      ? patch.company_templates
-      : current?.company_templates || {},
-  plan_type: patch.plan_type ?? current?.plan_type ?? "free",
-  usage_count:
-    typeof patch.usage_count === "number"
-      ? patch.usage_count
-      : current?.usage_count ?? 0,
-  updated_at: new Date().toISOString(),
-};
+    user_id: userId,
+    profile: mergeProfile(current?.profile || {}, patch.profile || {}),
+    summary:
+      patch.summary !== undefined ? patch.summary : current?.summary || null,
+
+    current_topic: statePatch.current_topic,
+    current_stage: statePatch.current_stage,
+    current_hypothesis_id: statePatch.current_hypothesis_id,
+    current_job_id: statePatch.current_job_id,
+    active_search_id: statePatch.active_search_id,
+
+    selected_job:
+      patch.selected_job !== undefined
+        ? patch.selected_job
+        : current?.selected_job || null,
+
+    interview_state:
+      patch.interview_state !== undefined
+        ? patch.interview_state
+        : current?.interview_state || {},
+
+    current_mode:
+      patch.current_mode !== undefined
+        ? patch.current_mode
+        : current?.current_mode || "normal",
+
+    is_paused:
+      patch.is_paused !== undefined
+        ? patch.is_paused
+        : current?.is_paused || false,
+
+    paused_state:
+      patch.paused_state !== undefined
+        ? patch.paused_state
+        : current?.paused_state || {},
+
+    company_templates:
+      patch.company_templates !== undefined
+        ? patch.company_templates
+        : current?.company_templates || {},
+
+    plan_type: patch.plan_type ?? current?.plan_type ?? "free",
+
+    usage_count:
+      typeof patch.usage_count === "number"
+        ? patch.usage_count
+        : current?.usage_count ?? 0,
+
+    updated_at: new Date().toISOString(),
+  };
 
   const { data, error } = await supabase
     .from("line_ca_sessions")
@@ -1092,19 +1110,25 @@ async function upsertSession(userId, patch = {}) {
   }
 
   return {
-  ...data,
-  profile: normalizeProfile(data.profile || {}),
-  interview_state: normalizeInterviewState(data.interview_state || {}),
-  current_topic: data.current_topic || null,
-  selected_job: data.selected_job || null,
-  current_mode: data.current_mode || "normal",
-  is_paused: Boolean(data.is_paused),
-  paused_state: data.paused_state || {},
-  company_templates:
-    data.company_templates && typeof data.company_templates === "object"
-      ? data.company_templates
-      : {},
-　};
+    ...data,
+    profile: normalizeProfile(data.profile || {}),
+    interview_state: normalizeInterviewState(data.interview_state || {}),
+    current_topic: data.current_topic || null,
+    current_stage:
+      normalizeSessionStage(data.current_stage) ||
+      deriveStageFromTopic(data.current_topic || null),
+    current_hypothesis_id: normalizeUuidLike(data.current_hypothesis_id),
+    current_job_id: normalizeUuidLike(data.current_job_id),
+    active_search_id: normalizeUuidLike(data.active_search_id),
+    selected_job: data.selected_job || null,
+    current_mode: data.current_mode || "normal",
+    is_paused: Boolean(data.is_paused),
+    paused_state: data.paused_state || {},
+    company_templates:
+      data.company_templates && typeof data.company_templates === "object"
+        ? data.company_templates
+        : {},
+  };
 }
 
 // ===== Conversation History =====
@@ -3437,6 +3461,81 @@ function getSelectedPlanFromState(state = {}) {
   return normalized.selectedPlan || normalized.lastSelectedPlan || null;
 }
 
+function normalizeSessionStage(stage = null) {
+  const allowed = [
+    "intake",
+    "self_analysis",
+    "job_suggestion",
+    "hypothesis_selection",
+    "job_shortlist",
+    "resume",
+    "resume_complete",
+    "interview",
+    "mock_interview",
+    "selection_tracking",
+    "career",
+  ];
+
+  return allowed.includes(stage) ? stage : null;
+}
+
+function deriveStageFromTopic(topic = null) {
+  switch (topic) {
+    case "self_analysis":
+      return "self_analysis";
+    case "job_suggestion":
+      return "job_suggestion";
+    case "resume":
+      return "resume";
+    case "resume_complete":
+      return "resume_complete";
+    case "interview":
+      return "interview";
+    case "mock_interview":
+      return "mock_interview";
+    case "career":
+      return "career";
+    default:
+      return "intake";
+  }
+}
+
+function normalizeUuidLike(value) {
+  if (!value) return null;
+  const s = String(value).trim();
+  return s || null;
+}
+
+function buildSessionStatePatch(patch = {}, current = {}) {
+  const resolvedTopic =
+    patch.current_topic !== undefined
+      ? patch.current_topic
+      : current?.current_topic || null;
+
+  const resolvedStage =
+    patch.current_stage !== undefined
+      ? normalizeSessionStage(patch.current_stage)
+      : normalizeSessionStage(current?.current_stage) ||
+        deriveStageFromTopic(resolvedTopic);
+
+  return {
+    current_topic: resolvedTopic,
+    current_stage: resolvedStage,
+    current_hypothesis_id:
+      patch.current_hypothesis_id !== undefined
+        ? normalizeUuidLike(patch.current_hypothesis_id)
+        : normalizeUuidLike(current?.current_hypothesis_id),
+    current_job_id:
+      patch.current_job_id !== undefined
+        ? normalizeUuidLike(patch.current_job_id)
+        : normalizeUuidLike(current?.current_job_id),
+    active_search_id:
+      patch.active_search_id !== undefined
+        ? normalizeUuidLike(patch.active_search_id)
+        : normalizeUuidLike(current?.active_search_id),
+  };
+}
+
 // ===== Webhook =====
 app.post("/webhook", async (req, res) => {
   try {
@@ -3586,14 +3685,24 @@ app.post("/webhook", async (req, res) => {
           continue;
         }
 
-        const resolvedTopic = resolveCurrentTopic(
-          userMessage,
-          sessionBefore?.current_topic || null
-        );
+　　　　　const resolvedTopic = resolveCurrentTopic(
+  　　　　　userMessage,
+  　　　　　sessionBefore?.current_topic || null
+　　　　　);
 
-        if (resolvedTopic !== (sessionBefore?.current_topic || null)) {
-          await upsertSession(userId, { current_topic: resolvedTopic });
-        }
+　　　　　const resolvedStage =
+  　　　　　normalizeSessionStage(sessionBefore?.current_stage) ||
+  　　　　　deriveStageFromTopic(resolvedTopic);
+
+　　　　　if (
+  　　　　　resolvedTopic !== (sessionBefore?.current_topic || null) ||
+  　　　　　resolvedStage !== (sessionBefore?.current_stage || null)
+　　　　　) {
+  　　　　　await upsertSession(userId, {
+    　　　　　current_topic: resolvedTopic,
+    　　　　　current_stage: deriveStageFromTopic(resolvedTopic),
+  　　　　　});
+　　　　　}
 
         await saveMessage(userId, "user", userMessage);
         const updatedSession = await updateUserProfile(userId, userMessage);
@@ -3892,19 +4001,23 @@ if (isSpecificJobResumeRequest(userMessage)) {
     selectedJob = "求人3";
   }
 
-  const resumeSelectedJob = detectSelectedJob(userMessage);
+  const detectedSelectedJob = detectSelectedJob(userMessage);
 
 await upsertSession(userId, {
   current_topic: "resume",
-  selected_job: selectedJob || updatedSession?.selected_job || null,
+  current_stage: "resume",
+  selected_job:
+    detectedSelectedJob || updatedSession?.selected_job || null,
   interview_state: {
     ...currentStateForResume,
     selectedPlan,
     lastSelectedPlan: selectedPlan,
-    selectedJob: selectedJob || updatedSession?.selected_job || null,
+    selectedJob:
+      detectedSelectedJob || updatedSession?.selected_job || null,
     lastOutputType: "resume_specific_job",
   },
 });
+
 
   const reply = await askOpenAI(
     userId,
@@ -3915,12 +4028,12 @@ await upsertSession(userId, {
 
 対象:
 - selectedPlan: ${selectedPlan}
-- resumeSelectedJob: ${resumeSelectedJob}
+- rdetectedSelectedJob: ${detectedSelectedJob}
 
 以下の求人向けに、職務経歴書を作成してください。
 
 重要:
-- ${resumeSelectedJob} の内容だけを前提にする
+- ${detectedSelectedJob} の内容だけを前提にする
 - 他の求人の内容を混ぜない
 - profile / summary にある事実だけを使う
 - 実際に話していない経験や成果を追加しない
@@ -3937,7 +4050,7 @@ await upsertSession(userId, {
 - ・・・
 - ・・・
 
-【${resumeSelectedJob}向けに強調したい実績】
+【${detectedSelectedJob}向けに強調したい実績】
 - ・・・
 - ・・・
 - ・・・
@@ -3979,14 +4092,15 @@ await upsertSession(userId, {
             "A";
 
           await upsertSession(userId, {
-            current_topic: "job_suggestion",
-            interview_state: {
-              ...currentStateForJobs,
-              selectedPlan,
-              lastSelectedPlan: selectedPlan,
-              lastOutputType: "job_suggestion_concrete_3",
-            },
-          });
+  current_topic: "job_suggestion",
+  current_stage: "job_shortlist",
+  interview_state: {
+    ...currentState,
+    selectedPlan,
+    lastSelectedPlan: selectedPlan,
+    lastOutputType: "job_suggestion_concrete_3",
+  },
+});
 
           const reply = await askOpenAI(
             userId,
@@ -4030,14 +4144,15 @@ await upsertSession(userId, {
             });
           } else if (activeTopic === "job_suggestion") {
             await upsertSession(userId, {
-              current_topic: "job_suggestion",
-              interview_state: {
-                ...currentState,
-                pending_preference_questions: [],
-                last_asked_preference: null,
-                lastOutputType: "job_suggestion_main",
-              },
-            });
+ 　　　　　　　 current_topic: "job_suggestion",
+  　　　　　　　current_stage: "job_suggestion",
+  　　　　　　　interview_state: {
+    　　　　　　　...currentState,
+    　　　　　　　pending_preference_questions: [],
+    　　　　　　　last_asked_preference: null,
+    　　　　　　　lastOutputType: "job_suggestion_main",
+  　　　　　　　},
+　　　　　　　});
           }
         }
 
