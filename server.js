@@ -3040,8 +3040,9 @@ function getStarterReplyByIntent(intent) {
   switch (intent) {
     case "self_analysis":
       return "自己分析ですね。これまでの経験・得意なこと・やりたくないことを、わかる範囲で教えてください。";
+
     case "job_suggestion":
-      return "求人提案ですね。わかる範囲で大丈夫なので、以下を教えてください。
+      return `求人提案ですね。わかる範囲で大丈夫なので、以下を教えてください。
 
 ・今までの経験（例：法人営業3年、製造業、RAなど）
 ・やりたい仕事（例：営業企画、SaaS、企画寄り）
@@ -3058,17 +3059,23 @@ function getStarterReplyByIntent(intent) {
 
 1. 営業経験を活かして安定寄りに進みたい
 2. 企画・事業寄りにキャリアアップしたい
-3. SaaSや成長企業で挑戦したい";
+3. SaaSや成長企業で挑戦したい`;
+
     case "resume":
       return "職務経歴書・経験整理ですね。これまでの職歴、担当業務、実績をわかる範囲で送ってください。";
+
     case "resume_complete":
       return "職務経歴書完成版ですね。これまでの会話内容をもとに、そのまま提出しやすい形でまとめます。";
+
     case "interview":
       return "面接対策ですね。受ける職種や企業、想定される質問があれば送ってください。";
+
     case "mock_interview":
       return "模擬面接モードですね。例：模擬面接 営業企画 厳しめ / 模擬面接 RA 厳しめ / 模擬面接 リクルート RA 厳しめ / 模擬面接 SaaS 営業企画 厳しめ のように送ると、テンプレ別で進められます。";
+
     case "career":
       return "キャリア相談ですね。今の悩み、転職したい理由、迷っていることをそのまま送ってください。";
+
     default:
       return getMainMenuText();
   }
