@@ -2979,7 +2979,6 @@ ${JSON.stringify(profile, null, 2)}
     const response = await openai.chat.completions.create({
       model: OPENAI_MODEL,
       messages,
-      temperature: isJobSuggestionMode ? 0.4 : 0.7,
     });
 
     let reply =
