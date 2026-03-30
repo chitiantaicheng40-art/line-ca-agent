@@ -2335,9 +2335,55 @@ function buildConditionStatusInstruction(profile = {}) {
 `;
 }
 
-function buildJobSuggestionInstruction(profile = {}) {
+function detectCareerTrack(profile = {}, summary = "") {
+  const text =
+    JSON.stringify(profile || {}) + " " + String(summary || "");
+
+  if (
+    text.includes("営業") ||
+    text.includes("法人営業") ||
+    text.includes("RA") ||
+    text.includes("SaaS営業")
+  ) {
+    return "sales";
+  }
+
+  if (
+    text.includes("生産技術") ||
+    text.includes("生産管理") ||
+    text.includes("設備導入") ||
+    text.includes("製造")
+  ) {
+    return "manufacturing";
+  }
+
+  if (
+    text.includes("エンジニア") ||
+    text.includes("開発") ||
+    text.includes("システム") ||
+    text.includes("SE")
+  ) {
+    return "engineer";
+  }
+
+  if (
+    text.includes("経理") ||
+    text.includes("財務") ||
+    text.includes("人事") ||
+    text.includes("総務")
+  ) {
+    return "corporate";
+  }
+
+  return "beginner";
+}
+
+function buildJobSuggestionInstruction(profile = {}, summary = "") {
+  const track = detectCareerTrack(profile, summary);
+
   return `
 今回は「求人提案」として回答してください。
+現在のユーザータイプ: ${track}
 
 出力ルール：
 - 冒頭に一文だけ自然な導入文を入れてよい
@@ -3375,7 +3421,7 @@ const extraInstructions =
     : isJobSuggestionMode && isFollowup
     ? buildJobSuggestionFollowupInstruction(profile, selectedPlan || "A")
     : isJobSuggestionMode
-    ? buildJobSuggestionInstruction(profile)
+　　 ? buildJobSuggestionInstruction(profile, summary)
     : isResumeCompleteMode
     ? buildResumeCompleteInstruction(profile, summary, selectedPlan)
     : isResumeMode
