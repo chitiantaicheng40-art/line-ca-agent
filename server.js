@@ -1289,19 +1289,34 @@ const { type, strictness, companyTemplate } =
     currentState.selectedPlan || currentState.lastSelectedPlan || null
   );
 
+const selectedPlan =
+  currentState.selectedPlan || currentState.lastSelectedPlan || null;
+
+const selectedJob =
+  currentState.selected_job || sessionBefore?.selected_job || null;
+
+let resolvedType = type;
+let resolvedCompanyTemplate = companyTemplate;
+
+if (selectedPlan === "B" && selectedJob === "job1") {
+  resolvedType = "bizops_manufacturing_dx";
+} else if (selectedPlan === "B" && selectedJob === "job2") {
+  resolvedType = "revops_hrtech";
+}
+
   const customTemplateName =
     !companyTemplate && currentState.companyTemplateName
       ? currentState.companyTemplateName
       : null;
 
   const newState = {
-    ...currentState,
-    ...getDefaultMockInterviewState(type, strictness),
-    companyTemplate: companyTemplate || null,
-    companyTemplateName: customTemplateName,
-    lastOutputType: "mock_interview_start",
-    lastCompanyTemplate: companyTemplate || customTemplateName || null,
-  };
+  ...currentState,
+  ...getDefaultMockInterviewState(resolvedType, strictness),
+  companyTemplate: resolvedCompanyTemplate || null,
+  companyTemplateName: customTemplateName,
+  lastOutputType: "mock_interview_start",
+  lastCompanyTemplate: resolvedCompanyTemplate || customTemplateName || null,
+};
 
   const questions = getQuestionsFromInterviewState(newState, sessionBefore);
 
@@ -1320,6 +1335,8 @@ const { type, strictness, companyTemplate } =
   cs: "カスタマーサクセス",
   planning: "営業企画・事業企画",
   ra: "RA",
+  bizops_manufacturing_dx: "BizOps / CS Ops（製造DX）",
+  revops_hrtech: "RevOps（HRTech）",
 };
 
   const strictnessLabelMap = {
@@ -1334,7 +1351,7 @@ const { type, strictness, companyTemplate } =
 
 【設定】
 テンプレ：${companyLabel}
-職種：${typeLabelMap[type]}
+職種：${typeLabelMap[resolvedType]}
 厳しさ：${strictnessLabelMap[strictness]}
 
 私が面接官として1問ずつ質問します。
