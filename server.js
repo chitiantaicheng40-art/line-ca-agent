@@ -2381,9 +2381,50 @@ function detectCareerTrack(profile = {}, summary = "") {
 function buildJobSuggestionInstruction(profile = {}, summary = "") {
   const track = detectCareerTrack(profile, summary);
 
+  const trackInstruction =
+    track === "sales"
+      ? `
+追加ルール（営業タイプ）：
+- 営業経験を活かして企画寄りに進む前提で提案する
+- 営業企画 / RevOps / BizOps / CS企画 を優先する
+- SaaS、人材SaaS、HRTech、製造DXを優先する
+- 既に取得済みの条件を再確認する質問はしない
+- 「まずは第一希望の職種を教えてください」のような追加質問はしない
+- 3案は、営業経験をベースに少しずつ難易度と成長性を変える
+`
+      : track === "manufacturing"
+      ? `
+追加ルール（製造タイプ）：
+- 生産技術 / 生産管理 / 設備導入の経験を強みとして扱う
+- 製造DX、設備改善、CS Ops、BizOps、業務改善企画を優先する
+- 現場理解と運用定着力を活かせる提案にする
+- 既に取得済みの条件を再確認する質問はしない
+`
+      : track === "engineer"
+      ? `
+追加ルール（エンジニアタイプ）：
+- PM、PdM、IT企画、開発PMO、技術コンサルを優先する
+- 技術経験を活かしつつ上流に行ける提案にする
+- 既に取得済みの条件を再確認する質問はしない
+`
+      : track === "corporate"
+      ? `
+追加ルール（コーポレートタイプ）：
+- 経営企画、管理会計、FP&A、業務企画、人事企画を優先する
+- 管理部門経験を活かしつつ、企画・改善に寄せる提案にする
+- 既に取得済みの条件を再確認する質問はしない
+`
+      : `
+追加ルール（汎用タイプ）：
+- 未経験でも挑戦しやすい順に3案を出す
+- 既に取得済みの条件を再確認する質問はしない
+`;
+
   return `
 今回は「求人提案」として回答してください。
 現在のユーザータイプ: ${track}
+
+${trackInstruction}
 
 出力ルール：
 - 冒頭に一文だけ自然な導入文を入れてよい
