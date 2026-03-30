@@ -2542,16 +2542,25 @@ ${buildConditionStatusInstruction(profile)}
 }
 
 function buildJobSuggestionFollowupInstruction(profile = {}, selectedPlan = "A") {
-  const planNameMap = {
-    A: "営業企画・RevOps / カスタマーサクセス企画",
-    B: "事業企画・BizOps / 新規事業開発",
-    C: "マーケティング企画 / パートナーセールス"
-  };
+  const track = detectCareerTrack(profile, "");
 
-  const currentPlanName =
-    planNameMap[selectedPlan] || "この案";
+ const trackInstruction =
+  track === "sales"
+    ? `
+- 営業経験を前提に深掘りする
+- 営業企画 / RevOps / BizOps / CS企画 につながる説明にする
+- 「営業から企画寄りにどうスライドするか」を必ず入れる
+`
+    : track === "manufacturing"
+    ? `
+- 製造経験を前提に深掘りする
+- 製造DX、設備改善、運用定着、現場巻き込みを必ず入れる
+`
+    : "";
 
   return `
+${trackInstruction}
+
 今回は「求人提案の深掘り」です。
 ユーザーは ${selectedPlan} 案を詳しく見たいと考えています。
 
