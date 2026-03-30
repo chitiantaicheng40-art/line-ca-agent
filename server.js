@@ -1300,8 +1300,10 @@ let resolvedCompanyTemplate = companyTemplate;
 
 if (selectedPlan === "B" && selectedJob === "job1") {
   resolvedType = "bizops_manufacturing_dx";
+  resolvedCompanyTemplate = "manufacturing_dx_bizops";
 } else if (selectedPlan === "B" && selectedJob === "job2") {
   resolvedType = "revops_hrtech";
+  resolvedCompanyTemplate = "hrtech_revops";
 }
 
   const customTemplateName =
