@@ -2677,7 +2677,25 @@ function detectSelectedJob(text = "") {
   return null;
 }
 
-function buildConcreteThreeJobsInstruction(profile = {}, selectedPlan = "A") {
+function buildConcreteThreeJobsInstruction(profile = {}, selectedPlan = "A", summary = "") {
+  const track = detectCareerTrack(profile, summary);
+
+  const trackInstruction =
+    track === "sales"
+      ? `
+追加ルール（営業タイプ）：
+- 営業経験を前提に、営業企画 / RevOps / BizOps / CS企画 に寄せて3件出す
+- 「営業→企画へスライドしやすい順」で3件を並べる
+- SaaS、人材SaaS、HRTech、製造DXを優先する
+`
+      : track === "manufacturing"
+      ? `
+追加ルール（製造タイプ）：
+- 製造経験を前提に、製造DX / 設備改善 / BizOps / CS Ops に寄せて3件出す
+- 現場理解、設備導入、運用定着を活かせる求人を優先する
+`
+      : "";
+
   const planMap = {
     A: "営業企画 / RevOps / カスタマーサクセス企画",
     B: "事業企画 / BizOps / 新規事業開発",
@@ -2689,6 +2707,8 @@ function buildConcreteThreeJobsInstruction(profile = {}, selectedPlan = "A") {
   return `
 今回は「具体求人3件の提案」です。
 ユーザーは ${selectedPlan} 案を前提に、より具体的な求人イメージを3件見たいと考えています。
+
+${trackInstruction}
 
 重要ルール：
 - 実在企業の断定はしない
@@ -3467,7 +3487,7 @@ async function askOpenAI(userId, userMessage, forcedTopic = null, overrideInstru
 const extraInstructions =
   overrideInstruction ||
   (isJobSuggestionMode && wantsConcreteThreeJobs
-    ? buildConcreteThreeJobsInstruction(profile, selectedPlan || "A")
+    ? buildConcreteThreeJobsInstruction(profile, selectedPlan || "A", summary)
     : isJobSuggestionMode && isFollowup
     ? buildJobSuggestionFollowupInstruction(profile, selectedPlan || "A")
     : isJobSuggestionMode
