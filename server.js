@@ -2580,7 +2580,7 @@ ${trackInstruction}
 ありがとうございます。まずは ${selectedPlan} 案を深掘りします。
 
 【今回深掘りする案】
-${selectedPlan}. ${currentPlanName}
+${selectedPlan}. ${selectedPlan}
 
 【向いている人】
 - ・・・
